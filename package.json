@@ -1,0 +1,26 @@
+{
+  "name": "voice-chat-p2p",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Decentralized peer-to-peer voice chat system",
+  "scripts": {
+    "dev:signaling": "pnpm --filter signaling-server dev",
+    "dev:desktop": "pnpm --filter desktop-app dev",
+    "build": "pnpm -r build",
+    "dev": "pnpm -r --parallel dev"
+  },
+  "keywords": [
+    "webrtc",
+    "p2p",
+    "voice-chat",
+    "electron"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.3.3"
+  },
+  "dependencies": {
+    "electron": "^28.3.3"
+  }
+}

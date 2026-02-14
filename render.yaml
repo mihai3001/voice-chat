@@ -1,0 +1,12 @@
+version: 1
+services:
+  - type: web
+    name: voice-chat-signaling
+    env: node
+    region: oregon
+    plan: free
+    buildCommand: cd packages/signaling-server && pnpm install && pnpm build
+    startCommand: cd packages/signaling-server && node dist/server.js
+    envVars:
+      - key: NODE_ENV
+        value: production

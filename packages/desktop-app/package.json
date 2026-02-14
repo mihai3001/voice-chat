@@ -1,0 +1,26 @@
+{
+  "name": "@voice-chat/desktop-app",
+  "version": "1.0.0",
+  "description": "Electron desktop application for voice chat",
+  "main": "dist/main.js",
+  "type": "module",
+  "scripts": {
+    "build:main": "tsc --project tsconfig.main.json",
+    "build:preload": "esbuild src/preload.ts --bundle --outfile=dist/preload.cjs --platform=node --format=cjs",
+    "build:renderer": "esbuild src/renderer/app.ts --bundle --outfile=dist/renderer/app.js --platform=node --format=esm --external:electron",
+    "build": "pnpm build:main && pnpm build:preload && pnpm build:renderer",
+    "dev": "pnpm build && pnpm exec electron .",
+    "start": "pnpm exec electron ."
+  },
+  "dependencies": {
+    "@voice-chat/client-core": "workspace:*",
+    "electron": "^28.1.4",
+    "socket.io-client": "^4.6.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.5",
+    "concurrently": "^8.2.2",
+    "esbuild": "^0.19.11",
+    "typescript": "^5.3.3"
+  }
+}

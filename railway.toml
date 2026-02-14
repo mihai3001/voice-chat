@@ -1,0 +1,11 @@
+# Railway.app configuration
+# Deploy: railway up
+
+[build]
+  builder = "NIXPACKS"
+  buildCommand = "cd packages/signaling-server && pnpm install && pnpm build"
+
+[deploy]
+  startCommand = "cd packages/signaling-server && node dist/server.js"
+  restartPolicyType = "ON_FAILURE"
+  restartPolicyMaxRetries = 10

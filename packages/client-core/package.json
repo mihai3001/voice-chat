@@ -1,0 +1,21 @@
+{
+  "name": "@voice-chat/client-core",
+  "version": "1.0.0",
+  "description": "Shared WebRTC logic for voice chat clients",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "simple-peer": "^9.11.1",
+    "socket.io-client": "^4.6.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.5",
+    "@types/simple-peer": "^9.11.8",
+    "typescript": "^5.3.3"
+  }
+}
