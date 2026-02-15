@@ -5,6 +5,9 @@ on:
     tags:
       - 'v*.*.*'  # Trigger on version tags like v1.0.0
 
+permissions:
+  contents: write
+
 jobs:
   release:
     runs-on: ${{ matrix.os }}
@@ -51,11 +54,9 @@ jobs:
         working-directory: packages/desktop-app
         run: |
           echo "Starting electron-builder..."
-          pnpm package
+          pnpm package -- --publish never
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: false
-          DEBUG: electron-builder
       
       - name: List release artifacts
         if: always()
