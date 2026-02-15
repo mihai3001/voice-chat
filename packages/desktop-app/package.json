@@ -41,11 +41,7 @@
     "files": [
       "dist/**/*",
       "src/renderer/index.html",
-      "package.json",
-      "node_modules/**/*"
-    ],
-    "asarUnpack": [
-      "node_modules/@voice-chat/**/*"
+      "package.json"
     ],
     "win": {
       "target": [
