@@ -18,6 +18,7 @@ const PORT = process.env.PORT || 3000;
 interface Room {
   id: string;
   peers: Map<string, PeerInfo>;
+  screenSharingPeers: Set<string>; // Track who is currently screen sharing
 }
 
 interface PeerInfo {
@@ -53,7 +54,8 @@ io.on('connection', (socket) => {
     if (!rooms.has(roomId)) {
       rooms.set(roomId, {
         id: roomId,
-        peers: new Map()
+        peers: new Map(),
+        screenSharingPeers: new Set()
       });
     }
     
@@ -75,10 +77,19 @@ io.on('connection', (socket) => {
     // Join socket room for broadcasting
     socket.join(roomId);
     
+    // Get list of peers currently screen sharing
+    const screenSharingPeers = Array.from(room.screenSharingPeers);
+    
     // Send list of existing peers to the new peer
     socket.emit('room-joined', {
       roomId,
       peers: existingPeers
+    });
+    
+    // Notify new peer about active screen shares
+    screenSharingPeers.forEach(sharingPeerId => {
+      socket.emit('screen-available', { peerId: sharingPeerId });
+      console.log(`[${new Date().toISOString()}] Notified ${peerId} about screen share from ${sharingPeerId}`);
     });
     
     // Notify existing peers about the new peer
@@ -139,6 +150,11 @@ io.on('connection', (socket) => {
     
     console.log(`[${new Date().toISOString()}] Screen available from ${peerId} in room ${roomId}`);
     
+    const room = rooms.get(roomId);
+    if (room) {
+      room.screenSharingPeers.add(peerId);
+    }
+    
     // Broadcast to all other peers in the room
     socket.to(roomId).emit('screen-available', { peerId });
   });
@@ -147,6 +163,11 @@ io.on('connection', (socket) => {
     const { roomId, peerId } = data;
     
     console.log(`[${new Date().toISOString()}] Screen unavailable from ${peerId} in room ${roomId}`);
+    
+    const room = rooms.get(roomId);
+    if (room) {
+      room.screenSharingPeers.delete(peerId);
+    }
     
     // Broadcast to all other peers in the room
     socket.to(roomId).emit('screen-unavailable', { peerId });
@@ -207,6 +228,7 @@ io.on('connection', (socket) => {
       if (peerEntry) {
         const [peerId] = peerEntry;
         room.peers.delete(peerId);
+        room.screenSharingPeers.delete(peerId); // Clean up screen sharing state
         
         // Notify other peers in the room
         socket.to(roomId).emit('peer-left', { peerId });
@@ -229,6 +251,7 @@ io.on('connection', (socket) => {
     
     if (room) {
       room.peers.delete(peerId);
+      room.screenSharingPeers.delete(peerId); // Clean up screen sharing state
       socket.leave(roomId);
       socket.to(roomId).emit('peer-left', { peerId });
       

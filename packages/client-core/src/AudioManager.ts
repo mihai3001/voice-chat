@@ -192,12 +192,17 @@ export class AudioManager {
 
     const { analyser, gainNode } = this.noiseGateNodes;
     const threshold = this.config.noiseGateThreshold || -40;
-    const attack = (this.config.noiseGateAttack || 10) / 1000; // Convert to seconds
-    const release = (this.config.noiseGateRelease || 100) / 1000;
+    
+    // Calculate per-frame rates (assuming ~60fps = 16.67ms per frame)
+    // attackRate: how much to increase gain per frame (1.0 / frames_to_full_open)
+    // releaseRate: how much to decrease gain per frame (1.0 / frames_to_full_close)
+    const attackTimeMs = this.config.noiseGateAttack || 10;
+    const releaseTimeMs = this.config.noiseGateRelease || 100;
+    const attackRate = 16.67 / attackTimeMs; // e.g., 16.67/10 = 1.667 (instant open)
+    const releaseRate = 16.67 / releaseTimeMs; // e.g., 16.67/100 = 0.167 (6 frames to close)
 
     const dataArray = new Uint8Array(analyser.frequencyBinCount);
     let currentGain = 0;
-    let isGateOpen = false;
 
     const process = () => {
       if (!this.localStream || !this.noiseGateNodes) return;
@@ -216,24 +221,16 @@ export class AudioManager {
       // Convert to decibels
       const db = 20 * Math.log10(rms || 0.0001);
 
-      // Determine if gate should be open
+      // Determine if gate should be open based on threshold
       const shouldBeOpen = db > threshold;
 
-      // Apply attack/release
-      if (shouldBeOpen && !isGateOpen) {
+      // Apply smooth attack/release
+      if (shouldBeOpen) {
         // Attack: Open gate quickly
-        isGateOpen = true;
-        currentGain = Math.min(1, currentGain + attack);
-      } else if (!shouldBeOpen && isGateOpen) {
-        // Release: Close gate slowly
-        isGateOpen = false;
-      }
-
-      // Smooth gain changes
-      if (isGateOpen) {
-        currentGain = Math.min(1, currentGain + attack);
+        currentGain = Math.min(1, currentGain + attackRate);
       } else {
-        currentGain = Math.max(0, currentGain - release);
+        // Release: Close gate slowly
+        currentGain = Math.max(0, currentGain - releaseRate);
       }
 
       // Apply gain
