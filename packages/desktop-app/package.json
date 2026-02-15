@@ -1,6 +1,6 @@
 {
   "name": "@voice-chat/desktop-app",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "Electron desktop application for voice chat",
   "author": "Voice Chat Team",
   "main": "dist/main.js",
@@ -32,8 +32,8 @@
     "typescript": "^5.3.3"
   },
   "build": {
-    "appId": "com.voicechat.p2p",
-    "productName": "Voice Chat P2P",
+    "appId": "com.voicelink.app",
+    "productName": "VoiceLink",
     "directories": {
       "output": "release"
     },
