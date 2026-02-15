@@ -411,12 +411,17 @@ export class MeshConnection {
    * Update local media stream
    */
   updateStream(stream: MediaStream): void {
+    const oldStream = this.localStream;
     this.localStream = stream;
     
     // Update stream for all existing peers
     this.peers.forEach((peerInfo) => {
       try {
-        peerInfo.connection.removeStream(this.localStream!);
+        // Remove old stream if it exists
+        if (oldStream) {
+          peerInfo.connection.removeStream(oldStream);
+        }
+        // Add new stream
         peerInfo.connection.addStream(stream);
       } catch (err) {
         console.error(`[MeshConnection] Error updating stream for ${peerInfo.peerId}:`, err);

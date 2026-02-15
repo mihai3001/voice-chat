@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, session, desktopCapturer } from 'electron';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -13,25 +13,36 @@ function createWindow() {
     height: 800,
     webPreferences: {
       nodeIntegration: true,
-      contextIsolation: false,
+      contextIsolation: true,
       preload: path.join(__dirname, 'preload.cjs')
     },
     title: 'Voice Chat P2P'
   });
 
   // Load the index.html from the renderer folder
-  // __dirname is dist/ after compilation, so go back to src/renderer
-  const rendererPath = app.isPackaged
-    ? path.join(__dirname, 'renderer', 'index.html')
-    : path.join(__dirname, '..', 'src', 'renderer', 'index.html');
+  // __dirname is dist/ after compilation
+  // When packaged: __dirname = resources/app.asar/dist, HTML is at resources/app.asar/src/renderer/index.html
+  // When not packaged: __dirname = dist, HTML is at src/renderer/index.html
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer', 'index.html');
   
   mainWindow.loadFile(rendererPath);
 
-  // Always open DevTools for debugging
-  mainWindow.webContents.openDevTools();
+  // Open DevTools only in development mode
+  if (!app.isPackaged) {
+    mainWindow.webContents.openDevTools();
+  }
 
   mainWindow.on('closed', () => {
     mainWindow = null;
+  });
+  
+  // Handle screen capture permissions
+  mainWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
+    if (permission === 'media') {
+      callback(true); // Grant permission for media access
+    } else {
+      callback(false);
+    }
   });
 }
 
@@ -57,6 +68,27 @@ app.on('window-all-closed', () => {
 // IPC handlers
 ipcMain.handle('get-user-data-path', () => {
   return app.getPath('userData');
+});
+
+// Handle desktop capturer sources for screen sharing
+ipcMain.handle('get-desktop-sources', async () => {
+  try {
+    console.log('Getting desktop sources...');
+    const sources = await desktopCapturer.getSources({ 
+      types: ['window', 'screen'],
+      thumbnailSize: { width: 150, height: 150 }
+    });
+    console.log(`Found ${sources.length} sources:`, sources.map(s => ({ id: s.id, name: s.name })));
+    return sources.map(source => ({
+      id: source.id,
+      name: source.name,
+      thumbnail: source.thumbnail.toDataURL(),
+      appIconDataURL: source.appIcon ? source.appIcon.toDataURL() : null
+    }));
+  } catch (err) {
+    console.error('Error getting desktop sources:', err);
+    throw err;
+  }
 });
 
 console.log('Electron app started');

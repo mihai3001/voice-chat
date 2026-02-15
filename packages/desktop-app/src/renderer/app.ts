@@ -8,6 +8,34 @@ let audioManager: AudioManager | null = null;
 let connected = false;
 let pushToTalkEnabled = false;
 let pushToTalkActive = false;
+let currentRoomId: string | null = null;
+
+// Screen sharing state
+let screenStream: MediaStream | null = null;
+let isScreenSharing = false;
+const remoteScreens = new Map<string, MediaStream>();
+const remoteScreenAvailable = new Map<string, boolean>(); // Track who's sharing (but not necessarily streaming to us)
+const screenViewers = new Set<string>(); // Track who's viewing our screen
+let screenQuality: 'low' | 'medium' | 'high' = 'medium';
+
+// Quality presets for screen sharing
+const qualityPresets = {
+  low: {
+    width: { ideal: 1280 },
+    height: { ideal: 720 },
+    frameRate: { ideal: 15, max: 15 }
+  },
+  medium: {
+    width: { ideal: 1920 },
+    height: { ideal: 1080 },
+    frameRate: { ideal: 30, max: 30 }
+  },
+  high: {
+    width: { ideal: 2560 },
+    height: { ideal: 1440 },
+    frameRate: { ideal: 60, max: 60 }
+  }
+};
 
 // Voice activity state
 const peerSpeakingState = new Map<string, boolean>();
@@ -43,6 +71,15 @@ const autoGainControlToggle = document.getElementById('auto-gain-control') as HT
 const themeToggleBtn = document.getElementById('theme-toggle') as HTMLButtonElement;
 const themeIcon = document.getElementById('theme-icon') as HTMLSpanElement;
 const themeText = document.getElementById('theme-text') as HTMLSpanElement;
+
+// Screen sharing elements
+const screenShareBtn = document.getElementById('screen-share-btn') as HTMLButtonElement;
+const stopScreenBtn = document.getElementById('stop-screen-btn') as HTMLButtonElement;
+const screenContainer = document.getElementById('screen-container') as HTMLDivElement;
+const localScreenVideo = document.getElementById('local-screen') as HTMLVideoElement;
+const remoteScreensContainer = document.getElementById('remote-screens-container') as HTMLDivElement;
+const remoteScreensDiv = document.getElementById('remote-screens') as HTMLDivElement;
+const screenQualitySelect = document.getElementById('screen-quality') as HTMLSelectElement;
 
 // Theme management
 function getSystemTheme(): 'light' | 'dark' {
@@ -119,7 +156,7 @@ interface Settings {
 
 function loadSettings(): Settings {
   const defaults: Settings = {
-    signalingUrl: 'http://localhost:3000',
+    signalingUrl: 'https://voice-chat-signaling-production.up.railway.app',
     username: defaultUsername,
     echoCancellation: true,
     noiseSuppression: true,
@@ -230,15 +267,24 @@ function updatePeersList() {
   topologyInfo.style.display = 'flex';
   peerCount.textContent = (peers.length + 1).toString(); // +1 for self
 
+  console.log('DEBUG: updatePeersList called, remoteScreenAvailable:', Array.from(remoteScreenAvailable.keys()));
+  
   peersList.innerHTML = peers.map(peer => {
     const isHost = peer.peerId === hostPeerId;
     const isSpeaking = peerSpeakingState.get(peer.peerId) || false;
+    const isSharing = remoteScreenAvailable.has(peer.peerId);
+    const isViewing = remoteScreens.has(peer.peerId);
+    
+    console.log(`DEBUG: Peer ${peer.peerId.substring(0, 8)}... isSharing:${isSharing} isViewing:${isViewing}`);
     const connectionIcon = peer.connectionType === 'turn' ? '⚡' :
                           peer.connectionType === 'stun' ? '🌐' :
                           peer.connectionType === 'direct' ? '🏠' : '';
     const connectionLabel = peer.connectionType === 'turn' ? 'TURN' :
                            peer.connectionType === 'stun' ? 'STUN' :
                            peer.connectionType === 'direct' ? 'Direct' : '';
+    
+    const screenBtnClass = isSharing ? (isViewing ? 'btn-success-sm' : 'btn-primary-sm') : 'btn-disabled-sm';
+    const screenBtnText = isViewing ? '👁️ Viewing' : (isSharing ? '👁️ View' : '🖥️ Not Sharing');
     
     return `
       <div class="peer-item ${peer.connected ? 'connected' : ''} ${isHost ? 'host' : ''}">
@@ -249,12 +295,32 @@ function updatePeersList() {
           ${peer.connected && connectionLabel ? `<span class="connection-badge" title="${connectionLabel} connection">${connectionIcon}</span>` : ''}
           ${isSpeaking ? '<span style="font-size: 12px;">🎤</span>' : ''}
         </div>
-        <span style="font-size: 12px; color: #6b7280;">
-          ${peer.connected ? `🔊 Connected${connectionLabel ? ' (' + connectionLabel + ')' : ''}` : '⏳ Connecting...'}
-        </span>
+        <div style="display: flex; align-items: center; gap: 0.5rem;">
+          <span style="font-size: 12px; color: #6b7280;">
+            ${peer.connected ? `🔊 Connected${connectionLabel ? ' (' + connectionLabel + ')' : ''}` : '⏳ Connecting...'}
+          </span>
+          <button class="${screenBtnClass}" data-peer-id="${peer.peerId}" ${!isSharing ? 'disabled' : ''}>
+            ${screenBtnText}
+          </button>
+        </div>
       </div>
     `;
   }).join('');
+  
+  // Add event listeners to screen buttons
+  const screenButtons = peersList.querySelectorAll('button[data-peer-id]');
+  screenButtons.forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const peerId = (e.target as HTMLButtonElement).dataset.peerId!;
+      const isViewing = remoteScreens.has(peerId);
+      
+      if (isViewing) {
+        stopViewingScreen(peerId);
+      } else {
+        requestScreenShare(peerId);
+      }
+    });
+  });
 }
 
 /**
@@ -326,6 +392,9 @@ async function connect() {
       });
     });
 
+    // Store room ID for later use
+    currentRoomId = roomId;
+
     // Create mesh connection
     meshConnection = new MeshConnection({
       signalingUrl,
@@ -343,12 +412,33 @@ async function connect() {
     meshConnection.onPeerLeft((peerId) => {
       console.log(`Peer left: ${peerId}`);
       audioManager?.removeRemoteStream(peerId);
+      removeRemoteScreen(peerId); // Also remove their screen share if any
       updatePeersList();
     });
 
     meshConnection.onStreamReceived((peerId, stream) => {
       console.log(`Received stream from: ${peerId}`);
-      audioManager?.addRemoteStream(peerId, stream);
+      
+      // Check if stream has video tracks (screen share)
+      const videoTracks = stream.getVideoTracks();
+      if (videoTracks.length > 0) {
+        console.log(`Received screen share from ${peerId}, ${videoTracks.length} video tracks`);
+        
+        // Create a new stream with only video tracks for screen display
+        const screenOnlyStream = new MediaStream(videoTracks);
+        handleRemoteScreen(peerId, screenOnlyStream);
+        
+        // Create audio-only stream for audio manager
+        const audioTracks = stream.getAudioTracks();
+        if (audioTracks.length > 0) {
+          const audioOnlyStream = new MediaStream(audioTracks);
+          audioManager?.addRemoteStream(peerId, audioOnlyStream);
+        }
+      } else {
+        // Audio only
+        audioManager?.addRemoteStream(peerId, stream);
+      }
+      
       updatePeersList();
     });
 
@@ -375,16 +465,41 @@ async function connect() {
     connected = true;
     updateStatus('connected', `Connected to room: ${roomId}`);
     
+    // Set up screen sharing socket event handlers
+    socket.on('screen-available', (data: { peerId: string }) => {
+      console.log(`DEBUG: Received screen-available event from ${data.peerId}`);
+      showScreenAvailable(data.peerId);
+    });
+    
+    socket.on('screen-unavailable', (data: { peerId: string }) => {
+      console.log(`Screen unavailable from ${data.peerId}`);
+      removeRemoteScreen(data.peerId);
+    });
+    
+    socket.on('request-screen', (data: { requesterPeerId: string }) => {
+      console.log(`${data.requesterPeerId} requested to view screen`);
+      if (isScreenSharing) {
+        addScreenToViewer(data.requesterPeerId);
+      }
+    });
+    
+    socket.on('stop-request-screen', (data: { requesterPeerId: string }) => {
+      console.log(`${data.requesterPeerId} stopped viewing screen`);
+      if (isScreenSharing) {
+        removeScreenFromViewer(data.requesterPeerId);
+      }
+    });
+    
     // Update UI
     connectBtn.style.display = 'none';
     disconnectBtn.style.display = 'block';
     muteBtn.disabled = false;
     deafenBtn.disabled = false;
     pttToggleBtn.disabled = false;
+    screenShareBtn.disabled = false;
     signalingUrlInput.disabled = true;
     roomIdInput.disabled = true;
     usernameInput.disabled = true;
-    audioDeviceSelect.disabled = true;
 
     updatePeersList();
     
@@ -419,6 +534,7 @@ function disconnect() {
   }
 
   connected = false;
+  currentRoomId = null;
   updateStatus('disconnected', 'Disconnected');
 
   // Update UI
@@ -428,15 +544,582 @@ function disconnect() {
   muteBtn.disabled = true;
   deafenBtn.disabled = true;
   pttToggleBtn.disabled = true;
+  screenShareBtn.disabled = true;
   signalingUrlInput.disabled = false;
   roomIdInput.disabled = false;
   usernameInput.disabled = false;
-  audioDeviceSelect.disabled = false;
+  
+  // Stop screen sharing if active
+  if (isScreenSharing) {
+    stopScreenShare();
+  }
 
   updatePeersList();
   
   // Clear speaking state
   peerSpeakingState.clear();
+}
+
+/**
+ * Show source picker dialog
+ */
+function showSourcePicker(sources: any[]): Promise<any> {
+  return new Promise((resolve) => {
+    // Separate screens and windows
+    const screens = sources.filter(s => s.id.startsWith('screen:'));
+    const windows = sources.filter(s => s.id.startsWith('window:'));
+    
+    // Create modal overlay
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.8);
+      backdrop-filter: blur(10px);
+      z-index: 10000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+    `;
+    
+    // Create dialog
+    const dialog = document.createElement('div');
+    dialog.style.cssText = `
+      background: var(--surface);
+      border-radius: 16px;
+      padding: 2rem;
+      max-width: 900px;
+      max-height: 80vh;
+      overflow-y: auto;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+      border: 2px solid var(--border-color);
+    `;
+    
+    // Create header
+    const header = document.createElement('h2');
+    header.textContent = 'Choose what to share';
+    header.style.cssText = `
+      margin: 0 0 1.5rem 0;
+      color: var(--text-primary);
+      font-size: 1.5rem;
+    `;
+    dialog.appendChild(header);
+    
+    // Helper function to create source grid
+    const createSourceGrid = (title: string, sourcesList: any[]) => {
+      if (sourcesList.length === 0) return;
+      
+      const section = document.createElement('div');
+      section.style.marginBottom = '2rem';
+      
+      const sectionTitle = document.createElement('h3');
+      sectionTitle.textContent = title;
+      sectionTitle.style.cssText = `
+        margin: 0 0 1rem 0;
+        color: var(--text-primary);
+        font-size: 1.125rem;
+        font-weight: 600;
+      `;
+      section.appendChild(sectionTitle);
+      
+      const grid = document.createElement('div');
+      grid.style.cssText = `
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 1rem;
+      `;
+      
+      sourcesList.forEach((source: any) => {
+        const item = document.createElement('div');
+        item.style.cssText = `
+          cursor: pointer;
+          border: 2px solid var(--border-color);
+          border-radius: 12px;
+          padding: 1rem;
+          transition: all 0.2s;
+          background: var(--surface-secondary);
+        `;
+        
+        item.addEventListener('mouseenter', () => {
+          item.style.borderColor = 'var(--accent)';
+          item.style.transform = 'scale(1.05)';
+        });
+        
+        item.addEventListener('mouseleave', () => {
+          item.style.borderColor = 'var(--border-color)';
+          item.style.transform = 'scale(1)';
+        });
+        
+        item.addEventListener('click', () => {
+          document.body.removeChild(overlay);
+          resolve(source);
+        });
+        
+        // Add thumbnail
+        const img = document.createElement('img');
+        img.src = source.thumbnail || '';
+        img.style.cssText = `
+          width: 100%;
+          border-radius: 8px;
+          margin-bottom: 0.5rem;
+          background: #000;
+        `;
+        item.appendChild(img);
+        
+        // Add name
+        const name = document.createElement('div');
+        name.textContent = source.name;
+        name.style.cssText = `
+          color: var(--text-primary);
+          font-size: 0.875rem;
+          font-weight: 600;
+          text-align: center;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        `;
+        item.appendChild(name);
+        
+        grid.appendChild(item);
+      });
+      
+      section.appendChild(grid);
+      dialog.appendChild(section);
+    };
+    
+    // Add screens section
+    if (screens.length > 0) {
+      createSourceGrid('🖥️ Entire Screens', screens);
+    }
+    
+    // Add windows section
+    if (windows.length > 0) {
+      createSourceGrid('🪟 Application Windows', windows);
+    }
+    
+    // Add cancel button
+    const cancelBtn = document.createElement('button');
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.className = 'btn-danger';
+    cancelBtn.style.cssText = `
+      width: 100%;
+      padding: 0.75rem;
+      margin-top: 1rem;
+    `;
+    cancelBtn.addEventListener('click', () => {
+      document.body.removeChild(overlay);
+      resolve(null);
+    });
+    dialog.appendChild(cancelBtn);
+    
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+    
+    // Close on overlay click
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) {
+        document.body.removeChild(overlay);
+        resolve(null);
+      }
+    });
+  });
+}
+
+/**
+ * Start screen sharing
+ */
+async function startScreenShare() {
+  if (!connected || !meshConnection) {
+    console.warn('Cannot share screen: not connected');
+    alert('Please connect to a room first before sharing your screen.');
+    return;
+  }
+  
+  try {
+    console.log('Requesting desktop sources...');
+    
+    // Check if electron API is available
+    if (!window.electron?.ipcRenderer) {
+      throw new Error('Electron IPC not available. This feature only works in the desktop app.');
+    }
+    
+    // In Electron, we need to use desktopCapturer
+    // @ts-ignore - electron API
+    const sources = await window.electron.ipcRenderer.invoke('get-desktop-sources');
+    
+    console.log('Received sources:', sources);
+    
+    if (!sources || sources.length === 0) {
+      throw new Error('No screen sources available. Please make sure you have at least one screen or window open.');
+    }
+    
+    // Show source picker dialog
+    const selectedSource = await showSourcePicker(sources);
+    
+    if (!selectedSource) {
+      console.log('User cancelled source selection');
+      return;
+    }
+    
+    console.log('Selected source:', selectedSource.name, selectedSource.id);
+    
+    // Get quality settings
+    const quality = qualityPresets[screenQuality];
+    console.log(`Starting screen share with ${screenQuality} quality:`, quality);
+    
+    // Get the screen stream using the source ID
+    screenStream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: {
+        // @ts-ignore - Electron-specific constraint
+        mandatory: {
+          chromeMediaSource: 'desktop',
+          chromeMediaSourceId: selectedSource.id,
+          minWidth: quality.width.ideal,
+          maxWidth: quality.width.ideal,
+          minHeight: quality.height.ideal,
+          maxHeight: quality.height.ideal,
+          maxFrameRate: quality.frameRate.max
+        }
+      }
+    } as any);
+    
+    isScreenSharing = true;
+    
+    // Display local screen
+    localScreenVideo.srcObject = screenStream;
+    screenContainer.style.display = 'block';
+    
+    // Update button state
+    screenShareBtn.textContent = '🖥️ Sharing...';
+    screenShareBtn.className = 'btn-success';
+    
+    // Notify peers that screen is available (but don't send video yet)
+    if (socket && currentRoomId) {
+      console.log('DEBUG: Emitting screen-available event:', { roomId: currentRoomId, peerId: peerId });
+      socket.emit('screen-available', {
+        roomId: currentRoomId,
+        peerId: peerId
+      });
+      console.log('Screen share available, waiting for viewers to request...');
+    } else {
+      console.error('DEBUG: Cannot emit screen-available - socket:', !!socket, 'currentRoomId:', currentRoomId);
+    }
+    
+    // Handle stream end (user clicks browser's stop button)
+    screenStream.getVideoTracks()[0].addEventListener('ended', () => {
+      console.log('Screen sharing ended by user');
+      stopScreenShare();
+    });
+    
+    console.log('Screen sharing started');
+  } catch (err) {
+    console.error('Error starting screen share:', err);
+    alert(`Could not start screen sharing: ${(err as Error).message}`);
+  }
+}
+
+/**
+ * Stop screen sharing
+ */
+function stopScreenShare() {
+  if (screenStream) {
+    screenStream.getTracks().forEach(track => track.stop());
+    screenStream = null;
+  }
+  
+  isScreenSharing = false;
+  localScreenVideo.srcObject = null;
+  screenContainer.style.display = 'none';
+  
+  // Update button state
+  screenShareBtn.textContent = '🖥️ Share Screen';
+  screenShareBtn.className = 'btn-primary';
+  
+  // Clear viewers list
+  screenViewers.clear();
+  
+  // Notify peers and remove video tracks
+  if (socket && connected && currentRoomId) {
+    socket.emit('screen-unavailable', {
+      roomId: currentRoomId,
+      peerId: peerId
+    });
+  }
+  
+  // Remove video tracks from peer connections
+  if (meshConnection && audioManager) {
+    console.log('Removing screen video tracks from peer connections...');
+    
+    // Get audio-only stream
+    const audioOnlyStream = audioManager.getLocalStream();
+    if (audioOnlyStream) {
+      // Update mesh connection back to audio only
+      meshConnection.updateStream(audioOnlyStream);
+      console.log('Removed screen sharing, back to audio only');
+    }
+  }
+  
+  console.log('Screen sharing stopped');
+}
+
+/**
+ * Handle remote screen share
+ */
+function handleRemoteScreen(peerId: string, stream: MediaStream) {
+  remoteScreens.set(peerId, stream);
+  
+  // Create or update the video element
+  let screenItem = document.getElementById(`screen-${peerId}`);
+  if (!screenItem) {
+    screenItem = document.createElement('div');
+    screenItem.id = `screen-${peerId}`;
+    screenItem.className = 'remote-screen-item';
+    screenItem.innerHTML = `
+      <div class="screen-header">
+        <span>${peerId}</span>
+        <button class="fullscreen-btn" title="Full Screen">⛶</button>
+      </div>
+      <video autoplay playsinline></video>
+    `;
+    remoteScreensDiv.appendChild(screenItem);
+    
+    // Add full screen button handler
+    const fullscreenBtn = screenItem.querySelector('.fullscreen-btn') as HTMLButtonElement;
+    const video = screenItem.querySelector('video') as HTMLVideoElement;
+    
+    fullscreenBtn.addEventListener('click', () => {
+      if (!document.fullscreenElement) {
+        // Enter fullscreen
+        video.requestFullscreen().then(() => {
+          fullscreenBtn.textContent = '⛶';
+        }).catch(err => {
+          console.error('Error entering fullscreen:', err);
+        });
+      } else {
+        // Exit fullscreen
+        document.exitFullscreen();
+      }
+    });
+    
+    // Update button when fullscreen changes
+    document.addEventListener('fullscreenchange', () => {
+      if (document.fullscreenElement === video) {
+        fullscreenBtn.textContent = '⤓';
+      } else {
+        fullscreenBtn.textContent = '⛶';
+      }
+    });
+  }
+  
+  const video = screenItem.querySelector('video');
+  if (video) {
+    video.srcObject = stream;
+  }
+  
+  remoteScreensContainer.style.display = 'block';
+}
+
+/**
+ * Show screen available notification (not streaming yet)
+ */
+function showScreenAvailable(peerId: string) {
+  remoteScreenAvailable.set(peerId, true);
+  console.log(`DEBUG: showScreenAvailable called for ${peerId}`);
+  console.log(`DEBUG: remoteScreenAvailable Map now has:`, Array.from(remoteScreenAvailable.keys()));
+  
+  // Update peers list to show the View Screen button as enabled
+  updatePeersList();
+}
+
+/**
+ * Request screen share from a peer
+ */
+function requestScreenShare(targetPeerId: string) {
+  if (socket && currentRoomId) {
+    console.log(`Requesting screen share from ${targetPeerId}`);
+    socket.emit('request-screen', {
+      roomId: currentRoomId,
+      targetPeerId: targetPeerId,
+      requesterPeerId: peerId
+    });
+    
+    // Update UI
+    updatePeersList();
+  }
+}
+
+/**
+ * Stop viewing a screen share
+ */
+function stopViewingScreen(targetPeerId: string) {
+  if (socket && currentRoomId) {
+    console.log(`Stopping screen view from ${targetPeerId}`);
+    socket.emit('stop-request-screen', {
+      roomId: currentRoomId,
+      targetPeerId: targetPeerId,
+      requesterPeerId: peerId
+    });
+  }
+  
+  // Remove the video element if it exists
+  const screenItem = document.getElementById(`screen-${peerId}`);
+  if (screenItem) {
+    screenItem.remove();
+  }
+  
+  // Remove from remoteScreens but keep in remoteScreenAvailable
+  remoteScreens.delete(peerId);
+  
+  // Hide container if no videos playing
+  if (remoteScreens.size === 0) {
+    remoteScreensContainer.style.display = 'none';
+  }
+  
+  // Update peers list button state
+  updatePeersList();
+}
+
+/**
+ * Remove remote screen
+ */
+function removeRemoteScreen(peerId: string) {
+  remoteScreens.delete(peerId);
+  remoteScreenAvailable.delete(peerId);
+  screenViewers.delete(peerId);
+  
+  const screenItem = document.getElementById(`screen-${peerId}`);
+  if (screenItem) {
+    screenItem.remove();
+  }
+  
+  // Hide container if no screens
+  if (remoteScreens.size === 0) {
+    remoteScreensContainer.style.display = 'none';
+  }
+  
+  // Update peers list to grey out the button
+  updatePeersList();
+}
+
+/**
+ * Add screen video to a specific viewer
+ */
+function addScreenToViewer(viewerPeerId: string) {
+  if (!screenStream || !meshConnection || !audioManager) {
+    return;
+  }
+  
+  screenViewers.add(viewerPeerId);
+  console.log(`Adding screen video for viewer: ${viewerPeerId}`);
+  
+  // Get the peer connection
+  const peerInfo = meshConnection.getPeer(viewerPeerId);
+  if (!peerInfo) {
+    console.error(`Peer ${viewerPeerId} not found`);
+    return;
+  }
+  
+  // Get current audio stream
+  const audioStream = audioManager.getLocalStream();
+  if (!audioStream) {
+    return;
+  }
+  
+  // Create combined stream with audio + screen video
+  const combinedStream = new MediaStream();
+  
+  // Add audio tracks
+  audioStream.getAudioTracks().forEach(track => {
+    combinedStream.addTrack(track);
+  });
+  
+  // Add screen video tracks
+  screenStream.getVideoTracks().forEach(track => {
+    combinedStream.addTrack(track);
+  });
+  
+  // Update this specific peer's stream
+  try {
+    // Remove old stream
+    const oldStream = peerInfo.stream;
+    if (oldStream) {
+      peerInfo.connection.removeStream(oldStream);
+    }
+    // Add new combined stream
+    peerInfo.connection.addStream(combinedStream);
+    console.log(`Screen video added for ${viewerPeerId}`);
+  } catch (err) {
+    console.error(`Error adding screen to viewer ${viewerPeerId}:`, err);
+  }
+}
+
+/**
+ * Remove screen video from a specific viewer
+ */
+function removeScreenFromViewer(viewerPeerId: string) {
+  if (!meshConnection || !audioManager) {
+    return;
+  }
+  
+  screenViewers.delete(viewerPeerId);
+  console.log(`Removing screen video for viewer: ${viewerPeerId}`);
+  
+  // Get the peer connection
+  const peerInfo = meshConnection.getPeer(viewerPeerId);
+  if (!peerInfo) {
+    return;
+  }
+  
+  // Get audio-only stream
+  const audioStream = audioManager.getLocalStream();
+  if (!audioStream) {
+    return;
+  }
+  
+  // Update this specific peer's stream to audio only
+  try {
+    // Remove old stream
+    const oldStream = peerInfo.stream;
+    if (oldStream) {
+      peerInfo.connection.removeStream(oldStream);
+    }
+    // Add audio-only stream
+    peerInfo.connection.addStream(audioStream);
+    console.log(`Screen video removed for ${viewerPeerId}, back to audio only`);
+  } catch (err) {
+    console.error(`Error removing screen from viewer ${viewerPeerId}:`, err);
+  }
+}
+
+/**
+ * Handle audio device change while connected
+ */
+async function handleAudioDeviceChange() {
+  if (!connected || !audioManager || !meshConnection) {
+    return;
+  }
+
+  const deviceId = audioDeviceSelect.value;
+  
+  try {
+    console.log('[App] Switching audio device:', deviceId || 'default');
+    
+    // Switch to the new device
+    const newStream = await audioManager.switchInputDevice(deviceId || undefined);
+    
+    // Update the mesh connection with the new stream
+    meshConnection.updateStream(newStream);
+    
+    console.log('[App] Audio device switched successfully');
+  } catch (err) {
+    console.error('[App] Error switching audio device:', err);
+    updateStatus('connected', `Error switching audio device: ${(err as Error).message}`);
+  }
 }
 
 /**
@@ -602,10 +1285,34 @@ deafenBtn.addEventListener('click', toggleDeafen);
 pttToggleBtn.addEventListener('click', togglePushToTalk);
 themeToggleBtn.addEventListener('click', toggleTheme);
 
+// Screen sharing listeners
+screenShareBtn.addEventListener('click', () => {
+  if (isScreenSharing) {
+    stopScreenShare();
+  } else {
+    startScreenShare();
+  }
+});
+stopScreenBtn.addEventListener('click', stopScreenShare);
+
+// Screen quality selector
+screenQualitySelect.addEventListener('change', () => {
+  screenQuality = screenQualitySelect.value as 'low' | 'medium' | 'high';
+  console.log(`Screen quality changed to: ${screenQuality}`);
+  
+  // If currently sharing, inform user they need to restart sharing for quality to take effect
+  if (isScreenSharing) {
+    alert('Quality will be applied when you restart screen sharing.');
+  }
+});
+
 // Audio settings listeners
 echoCancellationToggle.addEventListener('change', updateAudioSettings);
 noiseSuppressionToggle.addEventListener('change', updateAudioSettings);
 autoGainControlToggle.addEventListener('change', updateAudioSettings);
+
+// Audio device change listener
+audioDeviceSelect.addEventListener('change', handleAudioDeviceChange);
 
 // Settings panel toggle
 const settingsToggle = document.getElementById('settings-toggle') as HTMLDivElement;

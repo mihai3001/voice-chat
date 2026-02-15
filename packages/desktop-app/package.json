@@ -2,25 +2,58 @@
   "name": "@voice-chat/desktop-app",
   "version": "1.0.0",
   "description": "Electron desktop application for voice chat",
+  "author": "Voice Chat Team",
   "main": "dist/main.js",
   "type": "module",
   "scripts": {
     "build:main": "tsc --project tsconfig.main.json",
-    "build:preload": "esbuild src/preload.ts --bundle --outfile=dist/preload.cjs --platform=node --format=cjs",
-    "build:renderer": "esbuild src/renderer/app.ts --bundle --outfile=dist/renderer/app.js --platform=node --format=esm --external:electron",
+    "build:preload": "esbuild src/preload.ts --bundle --outfile=dist/preload.cjs --platform=node --format=cjs --external:electron",
+    "build:renderer": "esbuild src/renderer/app.ts --bundle --outfile=dist/renderer/app.js --platform=browser --format=iife --external:electron --define:global=window",
     "build": "pnpm build:main && pnpm build:preload && pnpm build:renderer",
     "dev": "pnpm build && pnpm exec electron .",
-    "start": "pnpm exec electron ."
+    "start": "pnpm exec electron .",
+    "package": "pnpm build && pnpm exec electron-builder"
   },
   "dependencies": {
     "@voice-chat/client-core": "workspace:*",
-    "electron": "^28.1.4",
+    "events": "^3.3.0",
     "socket.io-client": "^4.6.1"
   },
   "devDependencies": {
     "@types/node": "^20.11.5",
     "concurrently": "^8.2.2",
+    "electron": "^28.1.4",
+    "electron-builder": "^26.7.0",
     "esbuild": "^0.19.11",
     "typescript": "^5.3.3"
+  },
+  "build": {
+    "appId": "com.voicechat.p2p",
+    "productName": "Voice Chat P2P",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "src/renderer/index.html",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "portable"
+      ]
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.social-networking"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Network"
+    }
   }
 }

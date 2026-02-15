@@ -133,6 +133,67 @@ io.on('connection', (socket) => {
     console.log(`[${new Date().toISOString()}] Relayed ${type} from ${senderPeerId} to ${targetPeerId}`);
   });
 
+  // Screen sharing events
+  socket.on('screen-available', (data: { roomId: string; peerId: string }) => {
+    const { roomId, peerId } = data;
+    
+    console.log(`[${new Date().toISOString()}] Screen available from ${peerId} in room ${roomId}`);
+    
+    // Broadcast to all other peers in the room
+    socket.to(roomId).emit('screen-available', { peerId });
+  });
+
+  socket.on('screen-unavailable', (data: { roomId: string; peerId: string }) => {
+    const { roomId, peerId } = data;
+    
+    console.log(`[${new Date().toISOString()}] Screen unavailable from ${peerId} in room ${roomId}`);
+    
+    // Broadcast to all other peers in the room
+    socket.to(roomId).emit('screen-unavailable', { peerId });
+  });
+
+  socket.on('request-screen', (data: { roomId: string; targetPeerId: string; requesterPeerId: string }) => {
+    const { roomId, targetPeerId, requesterPeerId } = data;
+    
+    console.log(`[${new Date().toISOString()}] ${requesterPeerId} requesting screen from ${targetPeerId}`);
+    
+    const room = rooms.get(roomId);
+    if (!room) {
+      console.error(`Room ${roomId} not found`);
+      return;
+    }
+    
+    const targetPeer = room.peers.get(targetPeerId);
+    if (!targetPeer) {
+      console.error(`Target peer ${targetPeerId} not found in room ${roomId}`);
+      return;
+    }
+    
+    // Forward request to target peer
+    io.to(targetPeer.socketId).emit('request-screen', { requesterPeerId });
+  });
+
+  socket.on('stop-request-screen', (data: { roomId: string; targetPeerId: string; requesterPeerId: string }) => {
+    const { roomId, targetPeerId, requesterPeerId } = data;
+    
+    console.log(`[${new Date().toISOString()}] ${requesterPeerId} stopped viewing screen from ${targetPeerId}`);
+    
+    const room = rooms.get(roomId);
+    if (!room) {
+      console.error(`Room ${roomId} not found`);
+      return;
+    }
+    
+    const targetPeer = room.peers.get(targetPeerId);
+    if (!targetPeer) {
+      console.error(`Target peer ${targetPeerId} not found in room ${roomId}`);
+      return;
+    }
+    
+    // Forward stop request to target peer
+    io.to(targetPeer.socketId).emit('stop-request-screen', { requesterPeerId });
+  });
+
   // Handle peer disconnect
   socket.on('disconnect', () => {
     console.log(`[${new Date().toISOString()}] Client disconnected: ${socket.id}`);
