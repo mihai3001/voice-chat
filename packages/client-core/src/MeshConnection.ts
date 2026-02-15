@@ -58,6 +58,7 @@ export class MeshConnection {
   private onConnectionStateChangeHandler?: (peerId: string, state: string) => void;
   private onTopologyChangeHandler?: (topology: TopologyType, hostPeerId?: string) => void;
   private onBecameHostHandler?: () => void;
+  private onDataReceivedHandler?: (peerId: string, data: any) => void;
   
   constructor(config: MeshConnectionConfig) {
     this.signalingUrl = config.signalingUrl;
@@ -297,6 +298,18 @@ export class MeshConnection {
       
       if (this.onStreamReceivedHandler) {
         this.onStreamReceivedHandler(peerId, stream);
+      }
+    });
+    
+    // Handle data channel messages
+    peer.on('data', (data: Buffer | string) => {
+      try {
+        const message = data.toString();
+        if (this.onDataReceivedHandler) {
+          this.onDataReceivedHandler(peerId, message);
+        }
+      } catch (err) {
+        console.error(`[MeshConnection] Error handling data from ${peerId}:`, err);
       }
     });
     
@@ -659,6 +672,42 @@ export class MeshConnection {
     return this.peers.get(peerId);
   }
   
+  /**
+   * Send data to all connected peers via data channels
+   */
+  sendData(data: string | object): void {
+    const dataString = typeof data === 'string' ? data : JSON.stringify(data);
+    
+    this.peers.forEach((peerInfo) => {
+      if (peerInfo.connected) {
+        try {
+          peerInfo.connection.send(dataString);
+        } catch (err) {
+          console.error(`[MeshConnection] Error sending data to ${peerInfo.peerId}:`, err);
+        }
+      }
+    });
+  }
+  
+  /**
+   * Send data to specific peer via data channel
+   */
+  sendDataToPeer(peerId: string, data: string | object): void {
+    const peerInfo = this.peers.get(peerId);
+    if (!peerInfo || !peerInfo.connected) {
+      console.warn(`[MeshConnection] Cannot send data to ${peerId}: not connected`);
+      return;
+    }
+    
+    const dataString = typeof data === 'string' ? data : JSON.stringify(data);
+    
+    try {
+      peerInfo.connection.send(dataString);
+    } catch (err) {
+      console.error(`[MeshConnection] Error sending data to ${peerId}:`, err);
+    }
+  }
+  
   
   /**
    * Event handlers
@@ -685,6 +734,10 @@ export class MeshConnection {
   
   onBecameHost(handler: () => void): void {
     this.onBecameHostHandler = handler;
+  }
+  
+  onDataReceived(handler: (peerId: string, data: any) => void): void {
+    this.onDataReceivedHandler = handler;
   }
   
   /**

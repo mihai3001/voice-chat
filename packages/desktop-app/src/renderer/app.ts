@@ -1,10 +1,11 @@
 import { io, Socket } from 'socket.io-client';
-import { MeshConnection, AudioManager } from '@voice-chat/client-core';
+import { MeshConnection, AudioManager, ChatManager, ChatMessage } from '@voice-chat/client-core';
 
 // State
 let socket: Socket | null = null;
 let meshConnection: MeshConnection | null = null;
 let audioManager: AudioManager | null = null;
+let chatManager: ChatManager | null = null;
 let connected = false;
 let pushToTalkEnabled = false;
 let pushToTalkActive = false;
@@ -17,6 +18,10 @@ const remoteScreens = new Map<string, MediaStream>();
 const remoteScreenAvailable = new Map<string, boolean>(); // Track who's sharing (but not necessarily streaming to us)
 const screenViewers = new Set<string>(); // Track who's viewing our screen
 let screenQuality: '720p15' | '720p30' | '720p60' | '1080p30' | '1080p60' | '1080p144' | '1440p60' | '1440p144' | '4k60' = '1080p30';
+
+// Chat state
+let isChatOpen = false;
+let unreadCount = 0;
 
 // Quality presets for screen sharing
 const qualityPresets = {
@@ -127,6 +132,17 @@ const updateDownloadBtn = document.getElementById('update-download-btn') as HTML
 const updateInstallBtn = document.getElementById('update-install-btn') as HTMLButtonElement;
 const updateDismissBtn = document.getElementById('update-dismiss-btn') as HTMLButtonElement;
 const updateProgress = document.getElementById('update-progress') as HTMLDivElement;
+
+// Chat elements
+const chatPanel = document.getElementById('chat-panel') as HTMLDivElement;
+const chatToggleBtn = document.getElementById('chat-toggle-btn') as HTMLButtonElement;
+const chatCloseBtn = document.getElementById('chat-close-btn') as HTMLButtonElement;
+const chatMessages = document.getElementById('chat-messages') as HTMLDivElement;
+const chatInput = document.getElementById('chat-input') as HTMLInputElement;
+const chatSendBtn = document.getElementById('chat-send-btn') as HTMLButtonElement;
+const chatImageBtn = document.getElementById('chat-image-btn') as HTMLButtonElement;
+const chatImageInput = document.getElementById('chat-image-input') as HTMLInputElement;
+const chatUnreadBadge = document.getElementById('chat-unread-badge') as HTMLSpanElement;
 
 /**
  * Declare window.electron type
@@ -779,6 +795,9 @@ async function connect() {
     // Start connection quality monitoring
     startConnectionQualityMonitoring();
     
+    // Initialize chat
+    initializeChat();
+    
   } catch (err) {
     console.error('Connection error:', err);
     updateStatus('disconnected', `Error: ${(err as Error).message}`);
@@ -797,6 +816,9 @@ function disconnect() {
   
   // Stop connection quality monitoring
   stopConnectionQualityMonitoring();
+  
+  // Cleanup chat
+  cleanupChat();
 
   if (meshConnection) {
     meshConnection.disconnect();
@@ -1162,35 +1184,47 @@ function handleRemoteScreen(peerId: string, stream: MediaStream) {
       <div class="screen-header">
         <span>${peerId}</span>
         <button class="fullscreen-btn" title="Full Screen">⛶</button>
+        <button class="fullscreen-close-btn" title="Close" style="display: none;">✕</button>
       </div>
       <video autoplay playsinline></video>
     `;
     remoteScreensDiv.appendChild(screenItem);
     
-    // Add full screen button handler  
+    // Add full screen button handlers
     const fullscreenBtn = screenItem.querySelector('.fullscreen-btn') as HTMLButtonElement;
+    const fullscreenCloseBtn = screenItem.querySelector('.fullscreen-close-btn') as HTMLButtonElement;
     const video = screenItem.querySelector('video') as HTMLVideoElement;
+    
+    const exitFullscreen = () => {
+      console.log('Exiting fullscreen mode');
+      screenItem!.classList.remove('fullscreen-active');
+      fullscreenBtn.style.display = 'block';
+      fullscreenCloseBtn.style.display = 'none';
+    };
+    
+    const enterFullscreen = () => {
+      console.log('Entering fullscreen mode');
+      screenItem!.classList.add('fullscreen-active');
+      fullscreenBtn.style.display = 'none';
+      fullscreenCloseBtn.style.display = 'block';
+    };
     
     fullscreenBtn.addEventListener('click', () => {
       console.log('Fullscreen button clicked!');
-      
-      // Toggle fullscreen class on the screen item container
-      if (screenItem!.classList.contains('fullscreen-active')) {
-        console.log('Exiting fullscreen mode');
-        screenItem!.classList.remove('fullscreen-active');
-        fullscreenBtn.textContent = '⛶'; // Enter fullscreen icon
-      } else {
-        console.log('Entering fullscreen mode');
-        screenItem!.classList.add('fullscreen-active');
-        fullscreenBtn.textContent = '⤓'; // Exit fullscreen icon
-      }
+      enterFullscreen();
     });
     
-    // Also allow ESC key to exit fullscreen
+    fullscreenCloseBtn.addEventListener('click', () => {
+      console.log('Close fullscreen button clicked!');
+      exitFullscreen();
+    });
+    
+    // Allow ESC key to exit fullscreen (and prevent disconnect)
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && screenItem!.classList.contains('fullscreen-active')) {
-        screenItem!.classList.remove('fullscreen-active');
-        fullscreenBtn.textContent = '⛶';
+        e.preventDefault();
+        e.stopPropagation();
+        exitFullscreen();
       }
     });
   }
@@ -1587,6 +1621,31 @@ settingsToggle?.addEventListener('click', () => {
 document.addEventListener('keydown', handleKeyboard);
 document.addEventListener('keyup', handleKeyboard);
 
+// Chat event listeners
+chatToggleBtn.addEventListener('click', toggleChat);
+chatCloseBtn.addEventListener('click', toggleChat);
+
+chatSendBtn.addEventListener('click', sendTextMessage);
+
+chatInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendTextMessage();
+  }
+});
+
+chatImageBtn.addEventListener('click', () => {
+  chatImageInput.click();
+});
+
+chatImageInput.addEventListener('change', () => {
+  const file = chatImageInput.files?.[0];
+  if (file) {
+    sendImageMessage(file);
+    chatImageInput.value = ''; // Reset input
+  }
+});
+
 // Load saved settings
 const savedSettings = loadSettings();
 signalingUrlInput.value = savedSettings.signalingUrl;
@@ -1620,6 +1679,254 @@ window.addEventListener('beforeunload', () => {
     disconnect();
   }
 });
+
+// ============================================================================
+// Chat Functions
+// ============================================================================
+
+/**
+ * Initialize chat manager
+ */
+function initializeChat() {
+  if (!meshConnection || !currentRoomId) {
+    console.error('Cannot initialize chat: missing mesh connection or room ID');
+    return;
+  }
+
+  chatManager = new ChatManager({
+    roomId: currentRoomId,
+    peerId,
+    username: usernameInput.value || defaultUsername,
+    meshConnection,
+    storageType: 'local'
+  });
+
+  // Handle incoming messages
+  chatManager.onMessage(handleChatMessage);
+
+  // Load message history
+  loadChatHistory();
+
+  // Enable chat interface
+  chatInput.disabled = false;
+  chatSendBtn.disabled = false;
+  chatImageBtn.disabled = false;
+
+  console.log('Chat initialized');
+}
+
+/**
+ * Handle incoming chat message
+ */
+function handleChatMessage(message: ChatMessage) {
+  addMessageToUI(message);
+
+  // Update unread count if chat is closed
+  if (!isChatOpen && message.senderId !== peerId) {
+    unreadCount++;
+    updateUnreadBadge();
+  }
+
+  // Scroll to bottom
+  setTimeout(() => {
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+  }, 100);
+}
+
+/**
+ * Load chat history from storage
+ */
+async function loadChatHistory() {
+  if (!chatManager) return;
+
+  try {
+    const messages = await chatManager.getMessages(50);
+    
+    // Clear existing messages
+    chatMessages.innerHTML = '';
+
+    if (messages.length === 0) {
+      chatMessages.innerHTML = '<div class="chat-empty"><p>No messages yet. Start the conversation!</p></div>';
+      return;
+    }
+
+    // Add messages to UI
+    messages.forEach(message => addMessageToUI(message, false));
+
+    // Scroll to bottom
+    setTimeout(() => {
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    }, 100);
+  } catch (err) {
+    console.error('Failed to load chat history:', err);
+  }
+}
+
+/**
+ * Add message to UI
+ */
+function addMessageToUI(message: ChatMessage, animate: boolean = true) {
+  // Remove empty state if present
+  const emptyState = chatMessages.querySelector('.chat-empty');
+  if (emptyState) {
+    emptyState.remove();
+  }
+
+  const messageEl = document.createElement('div');
+  messageEl.className = `chat-message ${message.senderId === peerId ? 'own' : ''}`;
+  if (!animate) messageEl.style.animation = 'none';
+
+  const header = document.createElement('div');
+  header.className = 'chat-message-header';
+
+  const author = document.createElement('span');
+  author.className = 'chat-message-author';
+  author.textContent = message.senderUsername;
+
+  const time = document.createElement('span');
+  time.className = 'chat-message-time';
+  time.textContent = formatTime(message.timestamp);
+
+  header.appendChild(author);
+  header.appendChild(time);
+
+  const content = document.createElement('div');
+  content.className = 'chat-message-content';
+
+  if (message.type === 'text') {
+    content.textContent = message.content;
+  } else if (message.type === 'image') {
+    const img = document.createElement('img');
+    img.src = message.content;
+    img.className = 'chat-message-image';
+    img.alt = message.metadata?.fileName || 'Image';
+    img.onclick = () => {
+      // Open image in new window
+      window.open(message.content, '_blank');
+    };
+    content.appendChild(img);
+  }
+
+  messageEl.appendChild(header);
+  messageEl.appendChild(content);
+
+  chatMessages.appendChild(messageEl);
+}
+
+/**
+ * Send text message
+ */
+async function sendTextMessage() {
+  const text = chatInput.value.trim();
+  if (!text || !chatManager) return;
+
+  try {
+    await chatManager.sendTextMessage(text);
+    chatInput.value = '';
+  } catch (err) {
+    console.error('Failed to send message:', err);
+    alert('Failed to send message');
+  }
+}
+
+/**
+ * Send image message
+ */
+async function sendImageMessage(file: File) {
+  if (!chatManager) return;
+
+  try {
+    await chatManager.sendImageMessage(file);
+  } catch (err: any) {
+    console.error('Failed to send image:', err);
+    alert(err.message || 'Failed to send image');
+  }
+}
+
+/**
+ * Toggle chat panel
+ */
+function toggleChat() {
+  isChatOpen = !isChatOpen;
+  
+  if (isChatOpen) {
+    chatPanel.classList.add('open');
+    unreadCount = 0;
+    updateUnreadBadge();
+    chatInput.focus();
+  } else {
+    chatPanel.classList.remove('open');
+  }
+}
+
+/**
+ * Update unread badge
+ */
+function updateUnreadBadge() {
+  if (unreadCount > 0) {
+    chatUnreadBadge.textContent = unreadCount > 99 ? '99+' : unreadCount.toString();
+    chatUnreadBadge.style.display = 'flex';
+  } else {
+    chatUnreadBadge.style.display = 'none';
+  }
+}
+
+/**
+ * Format timestamp
+ */
+function formatTime(timestamp: number): string {
+  const date = new Date(timestamp);
+  const now = new Date();
+  const diff = now.getTime() - date.getTime();
+
+  // Less than 1 minute
+  if (diff < 60000) {
+    return 'Just now';
+  }
+
+  // Less than 1 hour
+  if (diff < 3600000) {
+    const minutes = Math.floor(diff / 60000);
+    return `${minutes}m ago`;
+  }
+
+  // Today
+  if (date.toDateString() === now.toDateString()) {
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+
+  // Yesterday
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (date.toDateString() === yesterday.toDateString()) {
+    return `Yesterday ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+  }
+
+  // Older
+  return date.toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+/**
+ * Cleanup chat
+ */
+function cleanupChat() {
+  if (chatManager) {
+    chatManager.cleanup();
+    chatManager = null;
+  }
+
+  chatMessages.innerHTML = '<div class="chat-empty"><p>Connect to a room to start chatting</p></div>';
+  chatInput.disabled = true;
+  chatSendBtn.disabled = true;
+  chatImageBtn.disabled = true;
+  chatInput.value = '';
+  unreadCount = 0;
+  updateUnreadBadge();
+
+  if (isChatOpen) {
+    toggleChat();
+  }
+}
 
 // ============================================================================
 // Auto-Update Handlers

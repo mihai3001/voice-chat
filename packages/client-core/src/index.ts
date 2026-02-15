@@ -12,3 +12,9 @@ export type { PeerConnectionStats, PeerCapability, HostScore } from './HostElect
 
 export { HostForwarder } from './HostForwarder.js';
 export type { HostForwarderConfig } from './HostForwarder.js';
+
+export { ChatManager } from './ChatManager.js';
+export type { ChatConfig, ChatMessageHandler } from './ChatManager.js';
+
+export { ChatStorage } from './ChatStorage.js';
+export type { ChatMessage, ChatStorageAdapter, LocalStorageChatAdapter, ApiChatAdapter } from './ChatStorage.js';
