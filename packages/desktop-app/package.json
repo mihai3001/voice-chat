@@ -40,6 +40,7 @@
     "files": [
       "dist/**/*",
       "src/renderer/index.html",
+      "src/renderer/vendor/**/*",
       "package.json"
     ],
     "win": {
