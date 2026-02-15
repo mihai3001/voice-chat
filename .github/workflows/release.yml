@@ -38,20 +38,27 @@ jobs:
         run: pnpm package
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: false
       
       - name: Upload Windows artifacts
         if: matrix.os == 'windows-latest'
         uses: actions/upload-artifact@v4
         with:
           name: windows-release
-          path: packages/desktop-app/release/*.exe
+          path: |
+            packages/desktop-app/release/*.exe
+            packages/desktop-app/release/*.exe.blockmap
+          if-no-files-found: error
       
       - name: Upload macOS artifacts
         if: matrix.os == 'macos-latest'
         uses: actions/upload-artifact@v4
         with:
           name: macos-release
-          path: packages/desktop-app/release/*.dmg
+          path: |
+            packages/desktop-app/release/*.dmg
+            packages/desktop-app/release/*.dmg.blockmap
+          if-no-files-found: error
       
       - name: Upload Linux artifacts
         if: matrix.os == 'ubuntu-latest'
@@ -59,6 +66,7 @@ jobs:
         with:
           name: linux-release
           path: packages/desktop-app/release/*.AppImage
+          if-no-files-found: error
   
   publish:
     needs: release
