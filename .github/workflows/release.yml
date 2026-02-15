@@ -57,6 +57,7 @@ jobs:
           pnpm build
           pnpm exec electron-builder --publish=never
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: false
           ELECTRON_BUILDER_ALLOW_UNRESOLVED_DEPENDENCIES: true
       
