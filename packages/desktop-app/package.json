@@ -12,7 +12,7 @@
   "scripts": {
     "build:main": "tsc --project tsconfig.main.json",
     "build:preload": "esbuild src/preload.ts --bundle --outfile=dist/preload.cjs --platform=node --format=cjs --external:electron",
-    "build:renderer": "esbuild src/renderer/app.ts --bundle --outfile=dist/renderer/app.js --platform=browser --format=iife --external:electron --define:global=window",
+    "build:renderer": "esbuild src/renderer/app.ts --bundle --outfile=dist/renderer/app.js --platform=browser --format=iife --external:electron --define:global=window --define:process.env.NODE_ENV='\"production\"' --inject:./process-shim.js",
     "build": "pnpm build:main && pnpm build:preload && pnpm build:renderer",
     "dev": "pnpm build && pnpm exec electron .",
     "start": "pnpm exec electron .",
