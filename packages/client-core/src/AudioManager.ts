@@ -52,9 +52,9 @@ export class AudioManager {
       sampleRate: 48000,
       channelCount: 1, // Mono for voice
       noiseGateEnabled: true,
-      noiseGateThreshold: -40, // dB
-      noiseGateAttack: 10, // ms
-      noiseGateRelease: 100, // ms
+      noiseGateThreshold: -45, // dB (less aggressive, prevents speech cutoff)
+      noiseGateAttack: 5, // ms (faster attack)
+      noiseGateRelease: 150, // ms (slower release to avoid word cutoff)
       ...config
     };
   }
@@ -157,9 +157,9 @@ export class AudioManager {
       const gainNode = this.audioContext.createGain();
       const destination = this.audioContext.createMediaStreamDestination();
 
-      // Configure analyser for noise gate
-      analyser.fftSize = 2048;
-      analyser.smoothingTimeConstant = 0.8;
+      // Configure analyser for noise gate - use smaller FFT and less smoothing for faster response
+      analyser.fftSize = 512; // Smaller = faster response
+      analyser.smoothingTimeConstant = 0.3; // Less smoothing = faster detection
 
       // Connect nodes: source -> analyser -> gain -> destination
       source.connect(analyser);
@@ -191,32 +191,36 @@ export class AudioManager {
     if (!this.noiseGateNodes) return;
 
     const { analyser, gainNode } = this.noiseGateNodes;
-    const threshold = this.config.noiseGateThreshold || -40;
+    const threshold = this.config.noiseGateThreshold || -45; // Lower threshold = less aggressive
     
     // Calculate per-frame rates (assuming ~60fps = 16.67ms per frame)
-    // attackRate: how much to increase gain per frame (1.0 / frames_to_full_open)
-    // releaseRate: how much to decrease gain per frame (1.0 / frames_to_full_close)
-    const attackTimeMs = this.config.noiseGateAttack || 10;
-    const releaseTimeMs = this.config.noiseGateRelease || 100;
-    const attackRate = 16.67 / attackTimeMs; // e.g., 16.67/10 = 1.667 (instant open)
-    const releaseRate = 16.67 / releaseTimeMs; // e.g., 16.67/100 = 0.167 (6 frames to close)
+    const attackTimeMs = this.config.noiseGateAttack || 5; // Faster attack (5ms instead of 10ms)
+    const releaseTimeMs = this.config.noiseGateRelease || 150; // Slower release to avoid cutoff
+    const attackRate = 16.67 / attackTimeMs; // Instant open
+    const releaseRate = 16.67 / releaseTimeMs; // Gradual close
 
-    const dataArray = new Uint8Array(analyser.frequencyBinCount);
-    let currentGain = 0;
+    // Use time-domain data instead of frequency data for faster response
+    const bufferLength = analyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+    
+    // Start with gate at 0.7 to prevent initial cutoff
+    let currentGain = 0.7;
+    const minGain = 0.05; // Never close completely - keeps some audio through
 
     const process = () => {
       if (!this.localStream || !this.noiseGateNodes) return;
 
-      // Get current audio level
-      analyser.getByteFrequencyData(dataArray);
+      // Use time-domain data (waveform) for much faster detection than frequency data
+      analyser.getByteTimeDomainData(dataArray);
       
-      // Calculate RMS (Root Mean Square) level
+      // Calculate RMS from time-domain data (actual audio samples)
       let sum = 0;
-      for (let i = 0; i < dataArray.length; i++) {
-        const normalized = dataArray[i] / 255;
+      for (let i = 0; i < bufferLength; i++) {
+        // Convert from 0-255 to -1 to 1 range
+        const normalized = (dataArray[i] - 128) / 128;
         sum += normalized * normalized;
       }
-      const rms = Math.sqrt(sum / dataArray.length);
+      const rms = Math.sqrt(sum / bufferLength);
       
       // Convert to decibels
       const db = 20 * Math.log10(rms || 0.0001);
@@ -226,11 +230,11 @@ export class AudioManager {
 
       // Apply smooth attack/release
       if (shouldBeOpen) {
-        // Attack: Open gate quickly
+        // Attack: Open gate very quickly
         currentGain = Math.min(1, currentGain + attackRate);
       } else {
-        // Release: Close gate slowly
-        currentGain = Math.max(0, currentGain - releaseRate);
+        // Release: Close gate slowly, but keep minimum level
+        currentGain = Math.max(minGain, currentGain - releaseRate);
       }
 
       // Apply gain
