@@ -1,6 +1,6 @@
 {
   "name": "@voice-chat/desktop-app",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "Electron desktop application for voice chat",
   "author": "Voice Chat Team",
   "main": "dist/main.js",

@@ -24,59 +24,49 @@ const remoteScreenAvailable = new Map<string, boolean>(); // Track who's sharing
 const screenViewers = new Set<string>(); // Track who's viewing our screen
 let screenQuality: '720p15' | '720p30' | '720p60' | '1080p30' | '1080p60' | '1080p144' | '1440p60' | '1440p144' | '4k60' = '1080p30';
 
-// Quality presets for screen sharing (ordered by CPU usage)
+// Quality presets for screen sharing (keys match dropdown values)
 const qualityPresets = {
-  'Low CPU (480p 10fps)': {
-    width: { ideal: 854 },
-    height: { ideal: 480 },
-    frameRate: { ideal: 10, max: 10 }
-  },
-  'Balanced (720p 15fps)': {
+  '720p15': {
     width: { ideal: 1280 },
     height: { ideal: 720 },
     frameRate: { ideal: 15, max: 15 }
   },
-  '720p 30fps': {
+  '720p30': {
     width: { ideal: 1280 },
     height: { ideal: 720 },
     frameRate: { ideal: 30, max: 30 }
   },
-  '720p 60fps': {
+  '720p60': {
     width: { ideal: 1280 },
     height: { ideal: 720 },
     frameRate: { ideal: 60, max: 60 }
   },
-  '1080p 15fps': {
-    width: { ideal: 1920 },
-    height: { ideal: 1080 },
-    frameRate: { ideal: 15, max: 15 }
-  },
-  '1080p 30fps': {
+  '1080p30': {
     width: { ideal: 1920 },
     height: { ideal: 1080 },
     frameRate: { ideal: 30, max: 30 }
   },
-  '1080p 60fps': {
+  '1080p60': {
     width: { ideal: 1920 },
     height: { ideal: 1080 },
     frameRate: { ideal: 60, max: 60 }
   },
-  '1080p 144fps': {
+  '1080p144': {
     width: { ideal: 1920 },
     height: { ideal: 1080 },
     frameRate: { ideal: 144, max: 144 }
   },
-  '1440p 60fps': {
+  '1440p60': {
     width: { ideal: 2560 },
     height: { ideal: 1440 },
     frameRate: { ideal: 60, max: 60 }
   },
-  '1440p 144fps': {
+  '1440p144': {
     width: { ideal: 2560 },
     height: { ideal: 1440 },
     frameRate: { ideal: 144, max: 144 }
   },
-  '4K 60fps': {
+  '4k60': {
     width: { ideal: 3840 },
     height: { ideal: 2160 },
     frameRate: { ideal: 60, max: 60 }
@@ -1173,6 +1163,12 @@ async function startScreenShare() {
     
     // Get quality settings
     const quality = qualityPresets[screenQuality];
+    
+    if (!quality) {
+      console.error(`Invalid screen quality preset: ${screenQuality}`);
+      throw new Error(`Invalid quality preset: ${screenQuality}`);
+    }
+    
     console.log(`Starting screen share with ${screenQuality} quality:`, quality);
     
     // Get the screen stream using the source ID
