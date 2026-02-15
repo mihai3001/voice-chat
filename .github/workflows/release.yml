@@ -12,7 +12,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
+        os: [windows-latest]
+        # Temporarily disabled: macos-latest, ubuntu-latest
     
     steps:
       - name: Checkout code
@@ -28,45 +29,52 @@ jobs:
         with:
           version: 10
       
+      - name: Check pnpm version
+        run: pnpm --version
+      
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      
+      - name: List installed packages
+        run: pnpm list --depth 0
       
       - name: Build all packages
         run: pnpm -r build
       
+      - name: Check build output
+        run: |
+          echo "Checking desktop-app dist folder..."
+          dir packages\desktop-app\dist /s
+        shell: cmd
+      
       - name: Package desktop app
         working-directory: packages/desktop-app
-        run: pnpm package
+        run: |
+          echo "Starting electron-builder..."
+          pnpm package
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: false
+          DEBUG: electron-builder
+      
+      - name: List release artifacts
+        if: always()
+        run: |
+          echo "Checking release folder..."
+          if (Test-Path packages\desktop-app\release) {
+            Get-ChildItem packages\desktop-app\release -Recurse | Select-Object FullName, Length
+          } else {
+            echo "Release folder does not exist!"
+          }
+        shell: pwsh
       
       - name: Upload Windows artifacts
-        if: matrix.os == 'windows-latest'
         uses: actions/upload-artifact@v4
         with:
           name: windows-release
           path: |
             packages/desktop-app/release/*.exe
             packages/desktop-app/release/*.exe.blockmap
-          if-no-files-found: error
-      
-      - name: Upload macOS artifacts
-        if: matrix.os == 'macos-latest'
-        uses: actions/upload-artifact@v4
-        with:
-          name: macos-release
-          path: |
-            packages/desktop-app/release/*.dmg
-            packages/desktop-app/release/*.dmg.blockmap
-          if-no-files-found: error
-      
-      - name: Upload Linux artifacts
-        if: matrix.os == 'ubuntu-latest'
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-release
-          path: packages/desktop-app/release/*.AppImage
           if-no-files-found: error
   
   publish:
@@ -80,13 +88,15 @@ jobs:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
       
+      - name: List downloaded artifacts
+        run: |
+          echo "Downloaded artifacts:"
+          ls -R
+      
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: |
-            windows-release/*
-            macos-release/*
-            linux-release/*
+          files: windows-release/*
           draft: false
           prerelease: false
           generate_release_notes: true
