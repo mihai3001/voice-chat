@@ -50,16 +50,56 @@ jobs:
           dir packages\desktop-app\dist /s
         shell: cmd
       
+      - name: Create GitHub Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          release_name: VoiceLink ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+      
       - name: Package desktop app
         working-directory: packages/desktop-app
         run: |
           echo "Starting electron-builder..."
           pnpm build
-          pnpm exec electron-builder --publish=never
+          pnpm exec electron-builder --publish never
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: false
           ELECTRON_BUILDER_ALLOW_UNRESOLVED_DEPENDENCIES: true
+      
+      - name: Upload Windows NSIS Installer
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: packages/desktop-app/release/VoiceLink Setup ${{ github.ref_name }}.exe
+          asset_name: VoiceLink-Setup-${{ github.ref_name }}.exe
+          asset_content_type: application/octet-stream
+      
+      - name: Upload Windows Portable
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: packages/desktop-app/release/VoiceLink ${{ github.ref_name }}.exe
+          asset_name: VoiceLink-Portable-${{ github.ref_name }}.exe
+          asset_content_type: application/octet-stream
+      
+      - name: Upload latest.yml
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: packages/desktop-app/release/latest.yml
+          asset_name: latest.yml
+          asset_content_type: text/yaml
       
       - name: List release artifacts
         if: always()
@@ -71,39 +111,3 @@ jobs:
             echo "Release folder does not exist!"
           }
         shell: pwsh
-      
-      - name: Upload Windows artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-release
-          path: |
-            packages/desktop-app/release/*.exe
-            packages/desktop-app/release/*.exe.blockmap
-            packages/desktop-app/release/latest.yml
-          if-no-files-found: error
-  
-  publish:
-    needs: release
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-      
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-      
-      - name: List downloaded artifacts
-        run: |
-          echo "Downloaded artifacts:"
-          ls -R
-      
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
-        with:
-          files: windows-release/*
-          draft: false
-          prerelease: false
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
