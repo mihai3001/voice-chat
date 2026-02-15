@@ -26,57 +26,98 @@ let screenQuality: '720p15' | '720p30' | '720p60' | '1080p30' | '1080p60' | '108
 let isChatOpen = false;
 let unreadCount = 0;
 
-// Quality presets for screen sharing
+// Quality presets for screen sharing (ordered by CPU usage)
 const qualityPresets = {
-  '720p15': {
+  'Low CPU (480p 10fps)': {
+    width: { ideal: 854 },
+    height: { ideal: 480 },
+    frameRate: { ideal: 10, max: 10 }
+  },
+  'Balanced (720p 15fps)': {
     width: { ideal: 1280 },
     height: { ideal: 720 },
     frameRate: { ideal: 15, max: 15 }
   },
-  '720p30': {
+  '720p 30fps': {
     width: { ideal: 1280 },
     height: { ideal: 720 },
     frameRate: { ideal: 30, max: 30 }
   },
-  '720p60': {
-    width: { ideal: 1280 },
-    height: { ideal: 720 },
-    frameRate: { ideal: 60, max: 60 }
+  '1080p 15fps': {
+    width: { ideal: 1920 },
+    height: { ideal: 1080 },
+    frameRate: { ideal: 15, max: 15 }
   },
-  '1080p30': {
+  '1080p 30fps': {
     width: { ideal: 1920 },
     height: { ideal: 1080 },
     frameRate: { ideal: 30, max: 30 }
   },
-  '1080p60': {
+  'High Quality (1080p 60fps)': {
     width: { ideal: 1920 },
     height: { ideal: 1080 },
-    frameRate: { ideal: 60, max: 60 }
-  },
-  '1080p144': {
-    width: { ideal: 1920 },
-    height: { ideal: 1080 },
-    frameRate: { ideal: 144, max: 144 }
-  },
-  '1440p60': {
-    width: { ideal: 2560 },
-    height: { ideal: 1440 },
-    frameRate: { ideal: 60, max: 60 }
-  },
-  '1440p144': {
-    width: { ideal: 2560 },
-    height: { ideal: 1440 },
-    frameRate: { ideal: 144, max: 144 }
-  },
-  '4k60': {
-    width: { ideal: 3840 },
-    height: { ideal: 2160 },
     frameRate: { ideal: 60, max: 60 }
   }
 };
 
 // Voice activity state
 const peerSpeakingState = new Map<string, boolean>();
+
+// Notification sounds (simple Web Audio API tones)
+const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+
+function playNotificationSound(type: 'message' | 'join' | 'leave') {
+  const oscillator = audioContext.createOscillator();
+  const gainNode = audioContext.createGain();
+  
+  oscillator.connect(gainNode);
+  gainNode.connect(audioContext.destination);
+  
+  // Configure sound based on type
+  switch (type) {
+    case 'message':
+      // Two quick beeps (Discord-like)
+      oscillator.frequency.value = 600;
+      gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.1);
+      
+      // Second beep
+      setTimeout(() => {
+        const osc2 = audioContext.createOscillator();
+        const gain2 = audioContext.createGain();
+        osc2.connect(gain2);
+        gain2.connect(audioContext.destination);
+        osc2.frequency.value = 750;
+        gain2.gain.setValueAtTime(0.1, audioContext.currentTime);
+        gain2.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+        osc2.start(audioContext.currentTime);
+        osc2.stop(audioContext.currentTime + 0.1);
+      }, 100);
+      break;
+      
+    case 'join':
+      // Rising tone
+      oscillator.frequency.setValueAtTime(400, audioContext.currentTime);
+      oscillator.frequency.exponentialRampToValueAtTime(600, audioContext.currentTime + 0.15);
+      gainNode.gain.setValueAtTime(0.15, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.15);
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.15);
+      break;
+      
+    case 'leave':
+      // Falling tone
+      oscillator.frequency.setValueAtTime(600, audioContext.currentTime);
+      oscillator.frequency.exponentialRampToValueAtTime(400, audioContext.currentTime + 0.15);
+      gainNode.gain.setValueAtTime(0.15, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.15);
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.15);
+      break;
+  }
+}
 
 // Connection quality state (0-4 bars)
 const peerConnectionQuality = new Map<string, number>();
@@ -692,11 +733,13 @@ async function connect() {
     // Set up event handlers
     meshConnection.onPeerJoined((peerId, username) => {
       console.log(`Peer joined: ${peerId} (${username})`);
+      playNotificationSound('join');
       updatePeersList();
     });
 
     meshConnection.onPeerLeft((peerId) => {
       console.log(`Peer left: ${peerId}`);
+      playNotificationSound('leave');
       audioManager?.removeRemoteStream(peerId);
       removeRemoteScreen(peerId); // Also remove their screen share if any
       updatePeersList();
@@ -1724,6 +1767,11 @@ function initializeChat() {
 function handleChatMessage(message: ChatMessage) {
   addMessageToUI(message);
 
+  // Play sound for incoming messages (not own)
+  if (message.senderId !== peerId) {
+    playNotificationSound('message');
+  }
+
   // Update unread count if chat is closed
   if (!isChatOpen && message.senderId !== peerId) {
     unreadCount++;
@@ -1797,7 +1845,15 @@ function addMessageToUI(message: ChatMessage, animate: boolean = true) {
   content.className = 'chat-message-content';
 
   if (message.type === 'text') {
-    content.textContent = message.content;
+    // Convert URLs to clickable links and preserve formatting
+    const urlRegex = /(https?:\/\/[^\s]+)/g;
+    const textWithLinks = message.content.replace(urlRegex, (url) => {
+      return `<a href="${url}" target="_blank" rel="noopener noreferrer" class="chat-link">${url}</a>`;
+    });
+    
+    // Replace newlines with <br>
+    const formattedText = textWithLinks.replace(/\n/g, '<br>');
+    content.innerHTML = formattedText;
   } else if (message.type === 'image') {
     const img = document.createElement('img');
     img.src = message.content;
