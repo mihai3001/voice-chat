@@ -79,6 +79,7 @@ jobs:
           path: |
             packages/desktop-app/release/*.exe
             packages/desktop-app/release/*.exe.blockmap
+            packages/desktop-app/release/latest.yml
           if-no-files-found: error
   
   publish:

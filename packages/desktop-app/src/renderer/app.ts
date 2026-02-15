@@ -43,6 +43,11 @@ const qualityPresets = {
     height: { ideal: 720 },
     frameRate: { ideal: 30, max: 30 }
   },
+  '720p 60fps': {
+    width: { ideal: 1280 },
+    height: { ideal: 720 },
+    frameRate: { ideal: 60, max: 60 }
+  },
   '1080p 15fps': {
     width: { ideal: 1920 },
     height: { ideal: 1080 },
@@ -53,9 +58,29 @@ const qualityPresets = {
     height: { ideal: 1080 },
     frameRate: { ideal: 30, max: 30 }
   },
-  'High Quality (1080p 60fps)': {
+  '1080p 60fps': {
     width: { ideal: 1920 },
     height: { ideal: 1080 },
+    frameRate: { ideal: 60, max: 60 }
+  },
+  '1080p 144fps': {
+    width: { ideal: 1920 },
+    height: { ideal: 1080 },
+    frameRate: { ideal: 144, max: 144 }
+  },
+  '1440p 60fps': {
+    width: { ideal: 2560 },
+    height: { ideal: 1440 },
+    frameRate: { ideal: 60, max: 60 }
+  },
+  '1440p 144fps': {
+    width: { ideal: 2560 },
+    height: { ideal: 1440 },
+    frameRate: { ideal: 144, max: 144 }
+  },
+  '4K 60fps': {
+    width: { ideal: 3840 },
+    height: { ideal: 2160 },
     frameRate: { ideal: 60, max: 60 }
   }
 };
