@@ -10,8 +10,7 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "simple-peer": "^9.11.1",
-    "socket.io-client": "^4.6.1"
+    "simple-peer": "^9.11.1"
   },
   "devDependencies": {
     "@types/node": "^20.11.5",
