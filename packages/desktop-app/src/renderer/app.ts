@@ -16,29 +16,67 @@ let isScreenSharing = false;
 const remoteScreens = new Map<string, MediaStream>();
 const remoteScreenAvailable = new Map<string, boolean>(); // Track who's sharing (but not necessarily streaming to us)
 const screenViewers = new Set<string>(); // Track who's viewing our screen
-let screenQuality: 'low' | 'medium' | 'high' = 'medium';
+let screenQuality: '720p15' | '720p30' | '720p60' | '1080p30' | '1080p60' | '1080p144' | '1440p60' | '1440p144' | '4k60' = '1080p30';
 
 // Quality presets for screen sharing
 const qualityPresets = {
-  low: {
+  '720p15': {
     width: { ideal: 1280 },
     height: { ideal: 720 },
     frameRate: { ideal: 15, max: 15 }
   },
-  medium: {
+  '720p30': {
+    width: { ideal: 1280 },
+    height: { ideal: 720 },
+    frameRate: { ideal: 30, max: 30 }
+  },
+  '720p60': {
+    width: { ideal: 1280 },
+    height: { ideal: 720 },
+    frameRate: { ideal: 60, max: 60 }
+  },
+  '1080p30': {
     width: { ideal: 1920 },
     height: { ideal: 1080 },
     frameRate: { ideal: 30, max: 30 }
   },
-  high: {
+  '1080p60': {
+    width: { ideal: 1920 },
+    height: { ideal: 1080 },
+    frameRate: { ideal: 60, max: 60 }
+  },
+  '1080p144': {
+    width: { ideal: 1920 },
+    height: { ideal: 1080 },
+    frameRate: { ideal: 144, max: 144 }
+  },
+  '1440p60': {
     width: { ideal: 2560 },
     height: { ideal: 1440 },
+    frameRate: { ideal: 60, max: 60 }
+  },
+  '1440p144': {
+    width: { ideal: 2560 },
+    height: { ideal: 1440 },
+    frameRate: { ideal: 144, max: 144 }
+  },
+  '4k60': {
+    width: { ideal: 3840 },
+    height: { ideal: 2160 },
     frameRate: { ideal: 60, max: 60 }
   }
 };
 
 // Voice activity state
 const peerSpeakingState = new Map<string, boolean>();
+
+// Connection quality state (0-4 bars)
+const peerConnectionQuality = new Map<string, number>();
+let connectionQualityInterval: NodeJS.Timeout | null = null;
+
+// Audio health check
+let audioHealthCheckInterval: NodeJS.Timeout | null = null;
+let isReconnectingAudio = false;
 
 // Generate a unique peer ID
 const peerId = `peer_${Math.random().toString(36).substr(2, 9)}`;
@@ -80,6 +118,30 @@ const localScreenVideo = document.getElementById('local-screen') as HTMLVideoEle
 const remoteScreensContainer = document.getElementById('remote-screens-container') as HTMLDivElement;
 const remoteScreensDiv = document.getElementById('remote-screens') as HTMLDivElement;
 const screenQualitySelect = document.getElementById('screen-quality') as HTMLSelectElement;
+
+// Update banner elements
+const updateBanner = document.getElementById('update-banner') as HTMLDivElement;
+const updateBannerTitle = document.getElementById('update-banner-title') as HTMLDivElement;
+const updateBannerMessage = document.getElementById('update-banner-message') as HTMLDivElement;
+const updateDownloadBtn = document.getElementById('update-download-btn') as HTMLButtonElement;
+const updateInstallBtn = document.getElementById('update-install-btn') as HTMLButtonElement;
+const updateDismissBtn = document.getElementById('update-dismiss-btn') as HTMLButtonElement;
+const updateProgress = document.getElementById('update-progress') as HTMLDivElement;
+
+/**
+ * Declare window.electron type
+ */
+declare global {
+  interface Window {
+    electron?: {
+      ipcRenderer: {
+        invoke: (channel: string, ...args: any[]) => Promise<any>;
+        on: (channel: string, callback: (...args: any[]) => void) => void;
+        removeAllListeners: (channel: string) => void;
+      };
+    };
+  }
+}
 
 // Theme management
 function getSystemTheme(): 'light' | 'dark' {
@@ -286,6 +348,18 @@ function updatePeersList() {
     const screenBtnClass = isSharing ? (isViewing ? 'btn-success-sm' : 'btn-primary-sm') : 'btn-disabled-sm';
     const screenBtnText = isViewing ? '👁️ Viewing' : (isSharing ? '👁️ View' : '🖥️ Not Sharing');
     
+    // Get connection quality (0-4 bars)
+    const quality = peerConnectionQuality.get(peer.peerId) || 0;
+    const qualityClass = quality === 4 ? 'excellent' : quality === 3 ? 'good' : quality === 2 ? 'fair' : 'poor';
+    const qualityBars = `
+      <div class="connection-quality ${qualityClass}" title="Connection quality: ${qualityClass}">
+        <div class="connection-bar ${quality >= 1 ? 'active' : ''}"></div>
+        <div class="connection-bar ${quality >= 2 ? 'active' : ''}"></div>
+        <div class="connection-bar ${quality >= 3 ? 'active' : ''}"></div>
+        <div class="connection-bar ${quality >= 4 ? 'active' : ''}"></div>
+      </div>
+    `;
+    
     return `
       <div class="peer-item ${peer.connected ? 'connected' : ''} ${isHost ? 'host' : ''}">
         <div class="peer-info">
@@ -296,6 +370,7 @@ function updatePeersList() {
           ${isSpeaking ? '<span style="font-size: 12px;">🎤</span>' : ''}
         </div>
         <div style="display: flex; align-items: center; gap: 0.5rem;">
+          ${peer.connected ? qualityBars : ''}
           <span style="font-size: 12px; color: #6b7280;">
             ${peer.connected ? `🔊 Connected${connectionLabel ? ' (' + connectionLabel + ')' : ''}` : '⏳ Connecting...'}
           </span>
@@ -343,6 +418,198 @@ function updateTopologyDisplay() {
   }
   
   updatePeersList();
+}
+
+/**
+ * Check if audio stream is healthy
+ */
+function isAudioStreamHealthy(): boolean {
+  if (!audioManager) return false;
+  
+  const stream = audioManager.getLocalStream();
+  if (!stream) return false;
+  
+  const tracks = stream.getAudioTracks();
+  if (tracks.length === 0) return false;
+  
+  // Check if all tracks are enabled and not ended
+  return tracks.every(track => track.readyState === 'live' && track.enabled);
+}
+
+/**
+ * Reconnect audio stream
+ */
+async function reconnectAudio() {
+  if (isReconnectingAudio || !connected) return;
+  
+  console.log('⚠️ Audio stream unhealthy, attempting reconnect...');
+  isReconnectingAudio = true;
+  updateStatus('connecting', 'Reconnecting audio...');
+  
+  try {
+    const deviceId = audioDeviceSelect.value;
+    
+    // Stop and restart audio
+    audioManager?.stopCapture();
+    const newStream = await audioManager!.startCapture(deviceId || undefined);
+    
+    // Update mesh connection with new stream
+    if (meshConnection && newStream) {
+      meshConnection.updateStream(newStream);
+      console.log('✅ Audio reconnected successfully');
+      updateStatus('connected', 'Connected');
+    }
+  } catch (err) {
+    console.error('❌ Failed to reconnect audio:', err);
+    updateStatus('disconnected', 'Audio reconnection failed');
+  } finally {
+    isReconnectingAudio = false;
+  }
+}
+
+/**
+ * Start audio health check
+ */
+function startAudioHealthCheck() {
+  // Clear any existing interval
+  stopAudioHealthCheck();
+  
+  console.log('🔍 Starting audio health check (every 5 seconds)');
+  
+  audioHealthCheckInterval = setInterval(() => {
+    if (!connected || !meshConnection) {
+      stopAudioHealthCheck();
+      return;
+    }
+    
+    if (!isAudioStreamHealthy()) {
+      console.warn('⚠️ Audio stream health check failed');
+      reconnectAudio();
+    }
+  }, 5000); // Check every 5 seconds
+}
+
+/**
+ * Stop audio health check
+ */
+function stopAudioHealthCheck() {
+  if (audioHealthCheckInterval) {
+    clearInterval(audioHealthCheckInterval);
+    audioHealthCheckInterval = null;
+    console.log('🔍 Stopped audio health check');
+  }
+}
+
+/**
+ * Calculate connection quality from WebRTC stats
+ */
+function calculateConnectionQuality(stats: { rtt?: number; packetsLost?: number; packetsReceived?: number; jitter?: number }): number {
+  let quality = 4; // Start with excellent (4 bars)
+
+  // Check RTT (Round Trip Time)
+  if (stats.rtt !== undefined) {
+    if (stats.rtt > 300) quality = Math.min(quality, 1); // Poor (>300ms)
+    else if (stats.rtt > 150) quality = Math.min(quality, 2); // Fair (150-300ms)
+    else if (stats.rtt > 50) quality = Math.min(quality, 3); // Good (50-150ms)
+    // Excellent (<50ms) - no change
+  }
+
+  // Check packet loss
+  if (stats.packetsLost !== undefined && stats.packetsReceived !== undefined) {
+    const totalPackets = stats.packetsLost + stats.packetsReceived;
+    if (totalPackets > 0) {
+      const lossRate = stats.packetsLost / totalPackets;
+      if (lossRate > 0.05) quality = Math.min(quality, 1); // Poor (>5%)
+      else if (lossRate > 0.02) quality = Math.min(quality, 2); // Fair (2-5%)
+      else if (lossRate > 0.01) quality = Math.min(quality, 3); // Good (1-2%)
+      // Excellent (<1%) - no change
+    }
+  }
+
+  // Check jitter
+  if (stats.jitter !== undefined) {
+    if (stats.jitter > 30) quality = Math.min(quality, 1); // Poor (>30ms)
+    else if (stats.jitter > 15) quality = Math.min(quality, 2); // Fair (15-30ms)
+    else if (stats.jitter > 5) quality = Math.min(quality, 3); // Good (5-15ms)
+    // Excellent (<5ms) - no change
+  }
+
+  return quality;
+}
+
+/**
+ * Monitor connection quality for a peer
+ */
+async function monitorPeerConnectionQuality(peerId: string) {
+  if (!meshConnection) return;
+
+  const peerInfo = meshConnection.getPeer(peerId);
+  if (!peerInfo || !peerInfo.connection) return;
+
+  try {
+    // Access the internal SimplePeer connection to get stats
+    const pc = (peerInfo.connection as any)._pc as RTCPeerConnection;
+    if (!pc || pc.connectionState !== 'connected') return;
+
+    const stats = await pc.getStats();
+    let rtt: number | undefined;
+    let packetsLost = 0;
+    let packetsReceived = 0;
+    let jitter: number | undefined;
+
+    stats.forEach((report: any) => {
+      if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+        rtt = report.currentRoundTripTime ? report.currentRoundTripTime * 1000 : undefined;
+      } else if (report.type === 'inbound-rtp' && report.kind === 'audio') {
+        packetsLost += report.packetsLost || 0;
+        packetsReceived += report.packetsReceived || 0;
+        jitter = report.jitter ? report.jitter * 1000 : undefined;
+      }
+    });
+
+    const quality = calculateConnectionQuality({ rtt, packetsLost, packetsReceived, jitter });
+    peerConnectionQuality.set(peerId, quality);
+  } catch (err) {
+    console.warn(`Failed to get stats for peer ${peerId}:`, err);
+  }
+}
+
+/**
+ * Start connection quality monitoring
+ */
+function startConnectionQualityMonitoring() {
+  stopConnectionQualityMonitoring();
+
+  console.log('📊 Starting connection quality monitoring');
+
+  connectionQualityInterval = setInterval(() => {
+    if (!connected || !meshConnection) {
+      stopConnectionQualityMonitoring();
+      return;
+    }
+
+    const peers = meshConnection.getPeers();
+    peers.forEach(peer => {
+      if (peer.connected) {
+        monitorPeerConnectionQuality(peer.peerId);
+      }
+    });
+
+    // Update UI after checking all peers
+    updatePeersList();
+  }, 3000); // Check every 3 seconds
+}
+
+/**
+ * Stop connection quality monitoring
+ */
+function stopConnectionQualityMonitoring() {
+  if (connectionQualityInterval) {
+    clearInterval(connectionQualityInterval);
+    connectionQualityInterval = null;
+    peerConnectionQuality.clear();
+    console.log('📊 Stopped connection quality monitoring');
+  }
 }
 
 /**
@@ -506,6 +773,12 @@ async function connect() {
     // Save settings
     saveSettings(getCurrentSettings());
     
+    // Start audio health check
+    startAudioHealthCheck();
+    
+    // Start connection quality monitoring
+    startConnectionQualityMonitoring();
+    
   } catch (err) {
     console.error('Connection error:', err);
     updateStatus('disconnected', `Error: ${(err as Error).message}`);
@@ -518,6 +791,12 @@ async function connect() {
  */
 function disconnect() {
   console.log('Disconnecting...');
+  
+  // Stop audio health check
+  stopAudioHealthCheck();
+  
+  // Stop connection quality monitoring
+  stopConnectionQualityMonitoring();
 
   if (meshConnection) {
     meshConnection.disconnect();
@@ -888,29 +1167,29 @@ function handleRemoteScreen(peerId: string, stream: MediaStream) {
     `;
     remoteScreensDiv.appendChild(screenItem);
     
-    // Add full screen button handler
+    // Add full screen button handler  
     const fullscreenBtn = screenItem.querySelector('.fullscreen-btn') as HTMLButtonElement;
     const video = screenItem.querySelector('video') as HTMLVideoElement;
     
     fullscreenBtn.addEventListener('click', () => {
-      if (!document.fullscreenElement) {
-        // Enter fullscreen
-        video.requestFullscreen().then(() => {
-          fullscreenBtn.textContent = '⛶';
-        }).catch(err => {
-          console.error('Error entering fullscreen:', err);
-        });
+      console.log('Fullscreen button clicked!');
+      
+      // Toggle fullscreen class on the screen item container
+      if (screenItem!.classList.contains('fullscreen-active')) {
+        console.log('Exiting fullscreen mode');
+        screenItem!.classList.remove('fullscreen-active');
+        fullscreenBtn.textContent = '⛶'; // Enter fullscreen icon
       } else {
-        // Exit fullscreen
-        document.exitFullscreen();
+        console.log('Entering fullscreen mode');
+        screenItem!.classList.add('fullscreen-active');
+        fullscreenBtn.textContent = '⤓'; // Exit fullscreen icon
       }
     });
     
-    // Update button when fullscreen changes
-    document.addEventListener('fullscreenchange', () => {
-      if (document.fullscreenElement === video) {
-        fullscreenBtn.textContent = '⤓';
-      } else {
+    // Also allow ESC key to exit fullscreen
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && screenItem!.classList.contains('fullscreen-active')) {
+        screenItem!.classList.remove('fullscreen-active');
         fullscreenBtn.textContent = '⛶';
       }
     });
@@ -1010,7 +1289,7 @@ function removeRemoteScreen(peerId: string) {
  * Add screen video to a specific viewer
  */
 function addScreenToViewer(viewerPeerId: string) {
-  if (!screenStream || !meshConnection || !audioManager) {
+  if (!screenStream || !meshConnection) {
     return;
   }
   
@@ -1024,34 +1303,13 @@ function addScreenToViewer(viewerPeerId: string) {
     return;
   }
   
-  // Get current audio stream
-  const audioStream = audioManager.getLocalStream();
-  if (!audioStream) {
-    return;
-  }
-  
-  // Create combined stream with audio + screen video
-  const combinedStream = new MediaStream();
-  
-  // Add audio tracks
-  audioStream.getAudioTracks().forEach(track => {
-    combinedStream.addTrack(track);
-  });
-  
-  // Add screen video tracks
-  screenStream.getVideoTracks().forEach(track => {
-    combinedStream.addTrack(track);
-  });
-  
-  // Update this specific peer's stream
+  // Add only the video tracks to the existing peer connection
+  // Audio tracks are already being sent, no need to touch them
   try {
-    // Remove old stream
-    const oldStream = peerInfo.stream;
-    if (oldStream) {
-      peerInfo.connection.removeStream(oldStream);
-    }
-    // Add new combined stream
-    peerInfo.connection.addStream(combinedStream);
+    screenStream.getVideoTracks().forEach(track => {
+      peerInfo.connection.addTrack(track, screenStream);
+      console.log(`Added video track to ${viewerPeerId}`);
+    });
     console.log(`Screen video added for ${viewerPeerId}`);
   } catch (err) {
     console.error(`Error adding screen to viewer ${viewerPeerId}:`, err);
@@ -1062,7 +1320,7 @@ function addScreenToViewer(viewerPeerId: string) {
  * Remove screen video from a specific viewer
  */
 function removeScreenFromViewer(viewerPeerId: string) {
-  if (!meshConnection || !audioManager) {
+  if (!meshConnection || !screenStream) {
     return;
   }
   
@@ -1075,21 +1333,16 @@ function removeScreenFromViewer(viewerPeerId: string) {
     return;
   }
   
-  // Get audio-only stream
-  const audioStream = audioManager.getLocalStream();
-  if (!audioStream) {
-    return;
-  }
-  
-  // Update this specific peer's stream to audio only
+  // Remove only the video tracks from the peer connection
+  // Leave audio tracks alone
   try {
-    // Remove old stream
-    const oldStream = peerInfo.stream;
-    if (oldStream) {
-      peerInfo.connection.removeStream(oldStream);
-    }
-    // Add audio-only stream
-    peerInfo.connection.addStream(audioStream);
+    screenStream.getVideoTracks().forEach(track => {
+      const sender = peerInfo.connection['_pc']?.getSenders()?.find((s: RTCRtpSender) => s.track === track);
+      if (sender) {
+        peerInfo.connection.removeTrack(sender);
+        console.log(`Removed video track from ${viewerPeerId}`);
+      }
+    });
     console.log(`Screen video removed for ${viewerPeerId}, back to audio only`);
   } catch (err) {
     console.error(`Error removing screen from viewer ${viewerPeerId}:`, err);
@@ -1297,7 +1550,7 @@ stopScreenBtn.addEventListener('click', stopScreenShare);
 
 // Screen quality selector
 screenQualitySelect.addEventListener('change', () => {
-  screenQuality = screenQualitySelect.value as 'low' | 'medium' | 'high';
+  screenQuality = screenQualitySelect.value as typeof screenQuality;
   console.log(`Screen quality changed to: ${screenQuality}`);
   
   // If currently sharing, inform user they need to restart sharing for quality to take effect
@@ -1367,6 +1620,121 @@ window.addEventListener('beforeunload', () => {
     disconnect();
   }
 });
+
+// ============================================================================
+// Auto-Update Handlers
+// ============================================================================
+
+let updateInfo: any = null;
+
+/**
+ * Show update banner
+ */
+function showUpdateBanner(title: string, message: string, showDownload: boolean = false, showInstall: boolean = false) {
+  updateBannerTitle.textContent = title;
+  updateBannerMessage.textContent = message;
+  updateDownloadBtn.style.display = showDownload ? 'block' : 'none';
+  updateInstallBtn.style.display = showInstall ? 'block' : 'none';
+  updateBanner.classList.add('visible');
+}
+
+/**
+ * Hide update banner
+ */
+function hideUpdateBanner() {
+  updateBanner.classList.remove('visible');
+  updateProgress.style.width = '0%';
+}
+
+/**
+ * Handle update status from main process
+ */
+if (window.electron?.ipcRenderer) {
+  window.electron.ipcRenderer.on('update-status', (payload: { event: string; data?: any }) => {
+    const { event, data } = payload;
+    console.log('Update event:', event, data);
+
+    switch (event) {
+      case 'checking-for-update':
+        console.log('Checking for updates...');
+        break;
+
+      case 'update-available':
+        updateInfo = data;
+        showUpdateBanner(
+          '🎉 Update Available!',
+          `Version ${data.version} is available. Click to download.`,
+          true,
+          false
+        );
+        break;
+
+      case 'update-not-available':
+        console.log('App is up to date');
+        break;
+
+      case 'download-progress':
+        const percent = Math.round(data.percent);
+        updateProgress.style.width = `${percent}%`;
+        updateBannerMessage.textContent = `Downloading update... ${percent}%`;
+        break;
+
+      case 'update-downloaded':
+        updateProgress.style.width = '100%';
+        showUpdateBanner(
+          '✅ Update Ready!',
+          'Update has been downloaded. Restart to install.',
+          false,
+          true
+        );
+        break;
+
+      case 'update-error':
+        console.error('Update error:', data.message);
+        showUpdateBanner(
+          '❌ Update Failed',
+          `Error: ${data.message}`,
+          false,
+          false
+        );
+        setTimeout(hideUpdateBanner, 5000);
+        break;
+    }
+  });
+
+  // Download button handler
+  updateDownloadBtn.addEventListener('click', async () => {
+    updateDownloadBtn.disabled = true;
+    updateDownloadBtn.textContent = 'Downloading...';
+    try {
+      await window.electron!.ipcRenderer.invoke('download-update');
+    } catch (err) {
+      console.error('Failed to download update:', err);
+      updateDownloadBtn.disabled = false;
+      updateDownloadBtn.textContent = 'Download';
+    }
+  });
+
+  // Install button handler
+  updateInstallBtn.addEventListener('click', async () => {
+    try {
+      await window.electron!.ipcRenderer.invoke('install-update');
+    } catch (err) {
+      console.error('Failed to install update:', err);
+    }
+  });
+
+  // Dismiss button handler
+  updateDismissBtn.addEventListener('click', () => {
+    hideUpdateBanner();
+  });
+
+  // Get and display app version
+  window.electron.ipcRenderer.invoke('get-app-version').then((version: string) => {
+    console.log('App version:', version);
+    // You could display this in the UI if desired
+  });
+}
 
 console.log('Voice Chat P2P client initialized');
 console.log('Peer ID:', peerId);

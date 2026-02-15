@@ -4,6 +4,10 @@
   "description": "Electron desktop application for voice chat",
   "author": "Voice Chat Team",
   "main": "dist/main.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mihai3001/voice-chat.git"
+  },
   "type": "module",
   "scripts": {
     "build:main": "tsc --project tsconfig.main.json",
@@ -16,6 +20,7 @@
   },
   "dependencies": {
     "@voice-chat/client-core": "workspace:*",
+    "electron-updater": "^6.1.7",
     "events": "^3.3.0",
     "socket.io-client": "^4.6.1"
   },
@@ -38,10 +43,29 @@
       "src/renderer/index.html",
       "package.json"
     ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "mihai3001",
+        "repo": "voice-chat"
+      }
+    ],
     "win": {
       "target": [
-        "portable"
-      ]
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "publisherName": "Voice Chat Team"
     },
     "mac": {
       "target": [

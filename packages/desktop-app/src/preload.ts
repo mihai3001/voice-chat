@@ -6,7 +6,13 @@ import { contextBridge, ipcRenderer } from 'electron';
 // Expose electron APIs to renderer using contextBridge (secure way)
 contextBridge.exposeInMainWorld('electron', {
   ipcRenderer: {
-    invoke: (channel: string, ...args: any[]) => ipcRenderer.invoke(channel, ...args)
+    invoke: (channel: string, ...args: any[]) => ipcRenderer.invoke(channel, ...args),
+    on: (channel: string, callback: (...args: any[]) => void) => {
+      ipcRenderer.on(channel, (event, ...args) => callback(...args));
+    },
+    removeAllListeners: (channel: string) => {
+      ipcRenderer.removeAllListeners(channel);
+    }
   }
 });
 

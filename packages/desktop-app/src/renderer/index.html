@@ -499,6 +499,58 @@
       background: var(--accent-bg);
     }
 
+    .connection-quality {
+      display: flex;
+      align-items: flex-end;
+      gap: 2px;
+      height: 14px;
+    }
+
+    .connection-bar {
+      width: 3px;
+      background: var(--text-tertiary);
+      border-radius: 1px;
+      opacity: 0.3;
+      transition: all 0.3s ease;
+    }
+
+    .connection-bar.active {
+      opacity: 1;
+    }
+
+    .connection-bar:nth-child(1) {
+      height: 4px;
+    }
+
+    .connection-bar:nth-child(2) {
+      height: 7px;
+    }
+
+    .connection-bar:nth-child(3) {
+      height: 10px;
+    }
+
+    .connection-bar:nth-child(4) {
+      height: 14px;
+    }
+
+    .connection-quality.excellent .connection-bar {
+      background: var(--success);
+    }
+
+    .connection-quality.good .connection-bar {
+      background: var(--success);
+    }
+
+    .connection-quality.fair .connection-bar:nth-child(1),
+    .connection-quality.fair .connection-bar:nth-child(2) {
+      background: var(--warning);
+    }
+
+    .connection-quality.poor .connection-bar:nth-child(1) {
+      background: var(--danger);
+    }
+
     .peer-info {
       display: flex;
       align-items: center;
@@ -839,6 +891,59 @@
       padding: 1rem;
       border: 2px solid var(--border-color);
       box-shadow: var(--shadow-lg);
+      position: relative;
+      transition: all 0.3s ease;
+    }
+    
+    /* Fullscreen mode overlay */
+    .remote-screen-item.fullscreen-active {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      width: 100vw !important;
+      height: 100vh !important;
+      z-index: 9999;
+      background: #000;
+      border-radius: 0;
+      padding: 0;
+      border: none;
+      margin: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    
+    .remote-screen-item.fullscreen-active .screen-header {
+      position: absolute;
+      top: 1rem;
+      right: 1rem;
+      z-index: 10001;
+      background: rgba(0, 0, 0, 0.8);
+      padding: 0.5rem 1rem;
+      border-radius: 8px;
+      backdrop-filter: blur(10px);
+      margin: 0;
+    }
+    
+    .remote-screen-item.fullscreen-active .screen-header span {
+      color: white;
+      font-weight: 600;
+    }
+    
+    .remote-screen-item.fullscreen-active video {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100vw !important;
+      height: 100vh !important;
+      max-width: 100vw !important;
+      max-height: 100vh !important;
+      object-fit: contain;
+      background: #000;
+      border-radius: 0;
     }
     
     .remote-screen-item .screen-header {
@@ -932,16 +1037,21 @@
     }
     
     /* Fullscreen video styling */
-    video:fullscreen {
+    video:fullscreen,
+    video:-webkit-full-screen,
+    video:-moz-full-screen,
+    video:-ms-fullscreen {
       width: 100vw;
       height: 100vh;
       object-fit: contain;
+      background: #000;
     }
     
-    video:-webkit-full-screen {
-      width: 100vw;
-      height: 100vh;
-      object-fit: contain;
+    video:fullscreen::backdrop,
+    video:-webkit-full-screen::backdrop,
+    video:-moz-full-screen::backdrop,
+    video:-ms-fullscreen::backdrop {
+      background: #000;
     }
     
     .shortcuts-hint strong {
@@ -1012,9 +1122,137 @@
       color: var(--text-secondary);
       transition: color 0.3s ease;
     }
+
+    /* Update banner styles */
+    .update-banner {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+      color: white;
+      padding: 0.75rem 1rem;
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      z-index: 10000;
+      box-shadow: var(--shadow-lg);
+      animation: slideDown 0.3s ease;
+    }
+
+    .update-banner.visible {
+      display: flex;
+    }
+
+    .update-banner-content {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      flex: 1;
+    }
+
+    .update-banner-icon {
+      font-size: 1.5rem;
+      animation: bounce 2s infinite;
+    }
+
+    .update-banner-text {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    .update-banner-title {
+      font-weight: 700;
+      font-size: 0.875rem;
+    }
+
+    .update-banner-message {
+      font-size: 0.75rem;
+      opacity: 0.9;
+    }
+
+    .update-banner-actions {
+      display: flex;
+      gap: 0.5rem;
+    }
+
+    .update-btn {
+      padding: 0.5rem 1rem;
+      border: none;
+      border-radius: 6px;
+      font-weight: 600;
+      font-size: 0.8125rem;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      white-space: nowrap;
+    }
+
+    .update-btn-primary {
+      background: white;
+      color: var(--accent);
+    }
+
+    .update-btn-primary:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+    }
+
+    .update-btn-secondary {
+      background: rgba(255, 255, 255, 0.2);
+      color: white;
+      backdrop-filter: blur(10px);
+    }
+
+    .update-btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.3);
+    }
+
+    .update-progress {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      height: 3px;
+      background: white;
+      transition: width 0.3s ease;
+    }
+
+    @keyframes slideDown {
+      from {
+        transform: translateY(-100%);
+        opacity: 0;
+      }
+      to {
+        transform: translateY(0);
+        opacity: 1;
+      }
+    }
+
+    @keyframes bounce {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-5px); }
+    }
   </style>
 </head>
 <body>
+  <!-- Update banner -->
+  <div id="update-banner" class="update-banner">
+    <div class="update-banner-content">
+      <div class="update-banner-icon">🔔</div>
+      <div class="update-banner-text">
+        <div class="update-banner-title" id="update-banner-title">Update Available</div>
+        <div class="update-banner-message" id="update-banner-message">A new version is ready to download</div>
+      </div>
+    </div>
+    <div class="update-banner-actions">
+      <button class="update-btn update-btn-primary" id="update-download-btn" style="display: none;">Download</button>
+      <button class="update-btn update-btn-primary" id="update-install-btn" style="display: none;">Restart & Install</button>
+      <button class="update-btn update-btn-secondary" id="update-dismiss-btn">Later</button>
+    </div>
+    <div class="update-progress" id="update-progress" style="width: 0%;"></div>
+  </div>
+
   <header>
     <h1>🎙️ Voice Chat P2P</h1>
     <button class="theme-toggle" id="theme-toggle">
@@ -1080,9 +1318,15 @@
         <div class="controls-row">
           <label for="screen-quality" style="margin-right: 0.5rem; color: var(--text-secondary);">Screen Quality:</label>
           <select id="screen-quality" class="quality-select">
-            <option value="low">Low (720p, 15fps)</option>
-            <option value="medium" selected>Medium (1080p, 30fps)</option>
-            <option value="high">High (1440p, 60fps)</option>
+            <option value="720p15">720p @ 15fps</option>
+            <option value="720p30">720p @ 30fps</option>
+            <option value="720p60">720p @ 60fps</option>
+            <option value="1080p30" selected>1080p @ 30fps</option>
+            <option value="1080p60">1080p @ 60fps</option>
+            <option value="1080p144">1080p @ 144fps</option>
+            <option value="1440p60">1440p @ 60fps</option>
+            <option value="1440p144">1440p @ 144fps</option>
+            <option value="4k60">4K @ 60fps</option>
           </select>
         </div>
         <div id="ptt-indicator" class="ptt-indicator">Hold SPACE to talk</div>

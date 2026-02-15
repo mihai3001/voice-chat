@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, session, desktopCapturer } from 'electron';
+import { autoUpdater } from 'electron-updater';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -6,6 +7,47 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 let mainWindow: BrowserWindow | null = null;
+
+// Configure auto-updater
+autoUpdater.autoDownload = false;
+autoUpdater.autoInstallOnAppQuit = true;
+
+// Auto-updater event handlers
+autoUpdater.on('checking-for-update', () => {
+  console.log('Checking for updates...');
+  sendUpdateStatus('checking-for-update');
+});
+
+autoUpdater.on('update-available', (info) => {
+  console.log('Update available:', info);
+  sendUpdateStatus('update-available', info);
+});
+
+autoUpdater.on('update-not-available', (info) => {
+  console.log('Update not available:', info);
+  sendUpdateStatus('update-not-available', info);
+});
+
+autoUpdater.on('error', (err) => {
+  console.error('Update error:', err);
+  sendUpdateStatus('update-error', { message: err.message });
+});
+
+autoUpdater.on('download-progress', (progressObj) => {
+  console.log(`Download progress: ${progressObj.percent}%`);
+  sendUpdateStatus('download-progress', progressObj);
+});
+
+autoUpdater.on('update-downloaded', (info) => {
+  console.log('Update downloaded:', info);
+  sendUpdateStatus('update-downloaded', info);
+});
+
+function sendUpdateStatus(event: string, data?: any) {
+  if (mainWindow) {
+    mainWindow.webContents.send('update-status', { event, data });
+  }
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -16,7 +58,9 @@ function createWindow() {
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.cjs')
     },
-    title: 'Voice Chat P2P'
+    title: 'Voice Chat P2P',
+    fullscreenable: true, // Allow fullscreen mode
+    simpleFullscreen: false // Use native fullscreen on macOS
   });
 
   // Load the index.html from the renderer folder
@@ -50,6 +94,16 @@ function createWindow() {
 app.whenReady().then(() => {
   createWindow();
 
+  // Check for updates after a short delay (only in production)
+  if (app.isPackaged) {
+    setTimeout(() => {
+      console.log('Checking for updates...');
+      autoUpdater.checkForUpdates().catch(err => {
+        console.error('Failed to check for updates:', err);
+      });
+    }, 3000);
+  }
+
   app.on('activate', () => {
     // On macOS re-create window when dock icon is clicked
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -68,6 +122,36 @@ app.on('window-all-closed', () => {
 // IPC handlers
 ipcMain.handle('get-user-data-path', () => {
   return app.getPath('userData');
+});
+
+// Update-related IPC handlers
+ipcMain.handle('check-for-updates', async () => {
+  if (!app.isPackaged) {
+    return { message: 'Updates only available in production builds' };
+  }
+  try {
+    return await autoUpdater.checkForUpdates();
+  } catch (err: any) {
+    console.error('Error checking for updates:', err);
+    throw new Error(err.message);
+  }
+});
+
+ipcMain.handle('download-update', async () => {
+  try {
+    return await autoUpdater.downloadUpdate();
+  } catch (err: any) {
+    console.error('Error downloading update:', err);
+    throw new Error(err.message);
+  }
+});
+
+ipcMain.handle('install-update', () => {
+  autoUpdater.quitAndInstall(false, true);
+});
+
+ipcMain.handle('get-app-version', () => {
+  return app.getVersion();
 });
 
 // Handle desktop capturer sources for screen sharing
