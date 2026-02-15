@@ -10,10 +10,16 @@ export interface AudioManagerConfig {
   autoGainControl?: boolean;
   sampleRate?: number;
   channelCount?: number;
+  // Noise gate settings
+  noiseGateEnabled?: boolean;
+  noiseGateThreshold?: number; // dB, typically -50 to -30
+  noiseGateAttack?: number; // ms, how fast gate opens
+  noiseGateRelease?: number; // ms, how fast gate closes
 }
 
 export class AudioManager {
   private localStream?: MediaStream;
+  private processedStream?: MediaStream;
   private audioContext?: AudioContext;
   private muted = false;
   private deafened = false;
@@ -24,7 +30,15 @@ export class AudioManager {
   private remoteAudioElements = new Map<string, HTMLAudioElement>();
   
   // Voice activity detection
-  private vadAnalysers = new Map<string, { analyser: AnalyserNode; dataArray: Uint8Array<ArrayBuffer> }>();
+  private vadAnalysers = new Map<string, { analyser: AnalyserNode; dataArray: Uint8Array<ArrayBuffer> }>;
+  
+  // Noise gate processing nodes
+  private noiseGateNodes?: {
+    source: MediaStreamAudioSourceNode;
+    analyser: AnalyserNode;
+    gainNode: GainNode;
+    destination: MediaStreamAudioDestinationNode;
+  };
   
   // Event handlers
   private onDevicesChangedHandler?: (devices: AudioDevice[]) => void;
@@ -37,6 +51,10 @@ export class AudioManager {
       autoGainControl: true,
       sampleRate: 48000,
       channelCount: 1, // Mono for voice
+      noiseGateEnabled: true,
+      noiseGateThreshold: -40, // dB
+      noiseGateAttack: 10, // ms
+      noiseGateRelease: 100, // ms
       ...config
     };
   }
@@ -104,12 +122,19 @@ export class AudioManager {
         }))
       });
       
+      // Apply noise gate processing if enabled
+      if (this.config.noiseGateEnabled) {
+        this.processedStream = this.applyNoiseGate(this.localStream);
+      } else {
+        this.processedStream = this.localStream;
+      }
+      
       // Apply initial mute state
       if (this.muted) {
         this.setMuted(true);
       }
       
-      return this.localStream;
+      return this.processedStream;
     } catch (err) {
       console.error('[AudioManager] Error starting audio capture:', err);
       throw err;
@@ -117,14 +142,129 @@ export class AudioManager {
   }
   
   /**
+   * Apply noise gate to filter out background noise
+   */
+  private applyNoiseGate(stream: MediaStream): MediaStream {
+    if (!this.audioContext) {
+      console.warn('[AudioManager] Audio context not initialized');
+      return stream;
+    }
+
+    try {
+      // Create audio nodes
+      const source = this.audioContext.createMediaStreamSource(stream);
+      const analyser = this.audioContext.createAnalyser();
+      const gainNode = this.audioContext.createGain();
+      const destination = this.audioContext.createMediaStreamDestination();
+
+      // Configure analyser for noise gate
+      analyser.fftSize = 2048;
+      analyser.smoothingTimeConstant = 0.8;
+
+      // Connect nodes: source -> analyser -> gain -> destination
+      source.connect(analyser);
+      analyser.connect(gainNode);
+      gainNode.connect(destination);
+
+      this.noiseGateNodes = { source, analyser, gainNode, destination };
+
+      // Start noise gate processing
+      this.processNoiseGate();
+
+      console.log('[AudioManager] Noise gate enabled:', {
+        threshold: this.config.noiseGateThreshold,
+        attack: this.config.noiseGateAttack,
+        release: this.config.noiseGateRelease
+      });
+
+      return destination.stream;
+    } catch (err) {
+      console.error('[AudioManager] Error applying noise gate:', err);
+      return stream;
+    }
+  }
+
+  /**
+   * Process audio through noise gate
+   */
+  private processNoiseGate(): void {
+    if (!this.noiseGateNodes) return;
+
+    const { analyser, gainNode } = this.noiseGateNodes;
+    const threshold = this.config.noiseGateThreshold || -40;
+    const attack = (this.config.noiseGateAttack || 10) / 1000; // Convert to seconds
+    const release = (this.config.noiseGateRelease || 100) / 1000;
+
+    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+    let currentGain = 0;
+    let isGateOpen = false;
+
+    const process = () => {
+      if (!this.localStream || !this.noiseGateNodes) return;
+
+      // Get current audio level
+      analyser.getByteFrequencyData(dataArray);
+      
+      // Calculate RMS (Root Mean Square) level
+      let sum = 0;
+      for (let i = 0; i < dataArray.length; i++) {
+        const normalized = dataArray[i] / 255;
+        sum += normalized * normalized;
+      }
+      const rms = Math.sqrt(sum / dataArray.length);
+      
+      // Convert to decibels
+      const db = 20 * Math.log10(rms || 0.0001);
+
+      // Determine if gate should be open
+      const shouldBeOpen = db > threshold;
+
+      // Apply attack/release
+      if (shouldBeOpen && !isGateOpen) {
+        // Attack: Open gate quickly
+        isGateOpen = true;
+        currentGain = Math.min(1, currentGain + attack);
+      } else if (!shouldBeOpen && isGateOpen) {
+        // Release: Close gate slowly
+        isGateOpen = false;
+      }
+
+      // Smooth gain changes
+      if (isGateOpen) {
+        currentGain = Math.min(1, currentGain + attack);
+      } else {
+        currentGain = Math.max(0, currentGain - release);
+      }
+
+      // Apply gain
+      gainNode.gain.setValueAtTime(currentGain, this.audioContext!.currentTime);
+
+      // Continue processing
+      requestAnimationFrame(process);
+    };
+
+    process();
+  }
+
+  /**
    * Stop capturing audio
    */
   stopCapture(): void {
     if (this.localStream) {
       this.localStream.getTracks().forEach(track => track.stop());
       this.localStream = undefined;
-      console.log('[AudioManager] Stopped audio capture');
     }
+    if (this.processedStream && this.processedStream !== this.localStream) {
+      this.processedStream.getTracks().forEach(track => track.stop());
+      this.processedStream = undefined;
+    }
+    if (this.noiseGateNodes) {
+      this.noiseGateNodes.source.disconnect();
+      this.noiseGateNodes.analyser.disconnect();
+      this.noiseGateNodes.gainNode.disconnect();
+      this.noiseGateNodes = undefined;
+    }
+    console.log('[AudioManager] Stopped audio capture');
   }
   
   /**
@@ -136,10 +276,10 @@ export class AudioManager {
   }
   
   /**
-   * Get the local audio stream
+   * Get the local audio stream (processed with noise gate if enabled)
    */
   getLocalStream(): MediaStream | undefined {
-    return this.localStream;
+    return this.processedStream || this.localStream;
   }
   
   /**
@@ -147,9 +287,10 @@ export class AudioManager {
    */
   setMuted(muted: boolean): void {
     this.muted = muted;
+    const stream = this.processedStream || this.localStream;
     
-    if (this.localStream) {
-      this.localStream.getAudioTracks().forEach(track => {
+    if (stream) {
+      stream.getAudioTracks().forEach(track => {
         track.enabled = !muted;
       });
       console.log(`[AudioManager] Audio ${muted ? 'muted' : 'unmuted'}`);
