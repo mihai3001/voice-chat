@@ -13,6 +13,8 @@ let connected = false;
 let pushToTalkEnabled = false;
 let pushToTalkActive = false;
 let currentRoomId: string | null = null;
+let isMuted = false;
+let isDeafened = false;
 
 // Screen sharing state
 let screenStream: MediaStream | null = null;
@@ -21,10 +23,6 @@ const remoteScreens = new Map<string, MediaStream>();
 const remoteScreenAvailable = new Map<string, boolean>(); // Track who's sharing (but not necessarily streaming to us)
 const screenViewers = new Set<string>(); // Track who's viewing our screen
 let screenQuality: '720p15' | '720p30' | '720p60' | '1080p30' | '1080p60' | '1080p144' | '1440p60' | '1440p144' | '4k60' = '1080p30';
-
-// Chat state
-let isChatOpen = false;
-let unreadCount = 0;
 
 // Quality presets for screen sharing (ordered by CPU usage)
 const qualityPresets = {
@@ -91,7 +89,7 @@ const peerSpeakingState = new Map<string, boolean>();
 // Notification sounds (simple Web Audio API tones)
 const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
 
-function playNotificationSound(type: 'message' | 'join' | 'leave') {
+function playNotificationSound(type: 'message' | 'join' | 'leave' | 'mute') {
   const oscillator = audioContext.createOscillator();
   const gainNode = audioContext.createGain();
   
@@ -141,6 +139,15 @@ function playNotificationSound(type: 'message' | 'join' | 'leave') {
       oscillator.start(audioContext.currentTime);
       oscillator.stop(audioContext.currentTime + 0.15);
       break;
+      
+    case 'mute':
+      // Short single beep
+      oscillator.frequency.value = 500;
+      gainNode.gain.setValueAtTime(0.12, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.08);
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.08);
+      break;
   }
 }
 
@@ -180,9 +187,6 @@ const peerCount = document.getElementById('peer-count') as HTMLSpanElement;
 const echoCancellationToggle = document.getElementById('echo-cancellation') as HTMLInputElement;
 const noiseSuppressionToggle = document.getElementById('noise-suppression') as HTMLInputElement;
 const autoGainControlToggle = document.getElementById('auto-gain-control') as HTMLInputElement;
-const themeToggleBtn = document.getElementById('theme-toggle') as HTMLButtonElement;
-const themeIcon = document.getElementById('theme-icon') as HTMLSpanElement;
-const themeText = document.getElementById('theme-text') as HTMLSpanElement;
 
 // Screen sharing elements
 const screenShareBtn = document.getElementById('screen-share-btn') as HTMLButtonElement;
@@ -203,15 +207,31 @@ const updateDismissBtn = document.getElementById('update-dismiss-btn') as HTMLBu
 const updateProgress = document.getElementById('update-progress') as HTMLDivElement;
 
 // Chat elements
-const chatPanel = document.getElementById('chat-panel') as HTMLDivElement;
-const chatToggleBtn = document.getElementById('chat-toggle-btn') as HTMLButtonElement;
-const chatCloseBtn = document.getElementById('chat-close-btn') as HTMLButtonElement;
 const chatMessages = document.getElementById('chat-messages') as HTMLDivElement;
 const chatInput = document.getElementById('chat-input') as HTMLInputElement;
 const chatSendBtn = document.getElementById('chat-send-btn') as HTMLButtonElement;
 const chatImageBtn = document.getElementById('chat-image-btn') as HTMLButtonElement;
 const chatImageInput = document.getElementById('chat-image-input') as HTMLInputElement;
-const chatUnreadBadge = document.getElementById('chat-unread-badge') as HTMLSpanElement;
+const chatEmptyState = document.getElementById('chat-empty-state') as HTMLDivElement;
+
+// View elements
+const disconnectedView = document.getElementById('disconnected-view') as HTMLDivElement;
+const connectedView = document.getElementById('connected-view') as HTMLDivElement;
+const rightSidebar = document.getElementById('right-sidebar') as HTMLDivElement;
+const leftSidebar = document.getElementById('left-sidebar') as HTMLDivElement;
+const mainContent = document.getElementById('main-content') as HTMLDivElement;
+const centeredConnection = document.getElementById('centered-connection') as HTMLDivElement;
+
+// User info elements
+const currentUsername = document.getElementById('current-username') as HTMLDivElement;
+const userStatus = document.getElementById('user-status') as HTMLDivElement;
+
+// Settings modal
+const settingsModal = document.getElementById('settings-modal') as HTMLDivElement;
+const settingsBtn = document.getElementById('settings-btn') as HTMLButtonElement;
+const settingsBtnMain = document.getElementById('settings-btn-main') as HTMLButtonElement;
+const settingsCloseBtn = document.getElementById('settings-close-btn') as HTMLButtonElement;
+// Theme toggle removed - always dark mode
 
 /**
  * Declare window.electron type
@@ -228,67 +248,19 @@ declare global {
   }
 }
 
-// Theme management
-function getSystemTheme(): 'light' | 'dark' {
-  if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-    return 'dark';
-  }
-  return 'light';
-}
-
-function getSavedTheme(): 'light' | 'dark' | null {
-  try {
-    const saved = localStorage.getItem('voiceChatTheme');
-    return saved === 'dark' || saved === 'light' ? saved : null;
-  } catch (err) {
-    console.error('Error loading theme:', err);
-    return null;
-  }
-}
-
-function saveTheme(theme: 'light' | 'dark'): void {
-  try {
-    localStorage.setItem('voiceChatTheme', theme);
-  } catch (err) {
-    console.error('Error saving theme:', err);
-  }
-}
-
-function applyTheme(theme: 'light' | 'dark'): void {
-  if (theme === 'dark') {
-    document.documentElement.setAttribute('data-theme', 'dark');
-    themeIcon.textContent = '☀️';
-    themeText.textContent = 'Light';
-  } else {
-    document.documentElement.removeAttribute('data-theme');
-    themeIcon.textContent = '🌙';
-    themeText.textContent = 'Dark';
-  }
-  console.log(`Theme applied: ${theme}`);
+// Theme management (dark mode only)
+function applyTheme(): void {
+  // Always use dark theme
+  document.documentElement.setAttribute('data-theme', 'dark');
 }
 
 function toggleTheme(): void {
-  const currentTheme = document.documentElement.getAttribute('data-theme');
-  const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
-  applyTheme(newTheme);
-  saveTheme(newTheme);
+  // Theme toggle disabled - always dark mode
 }
 
 // Initialize theme on load
 function initTheme(): void {
-  const savedTheme = getSavedTheme();
-  const theme = savedTheme || getSystemTheme();
-  applyTheme(theme);
-  
-  // Listen for system theme changes
-  if (window.matchMedia) {
-    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
-      if (!getSavedTheme()) {
-        // Only auto-switch if user hasn't manually set a theme
-        applyTheme(e.matches ? 'dark' : 'light');
-      }
-    });
-  }
+  applyTheme();
 }
 
 // Settings persistence
@@ -390,6 +362,15 @@ function updateAudioDeviceList(devices: any[]) {
 function updateStatus(status: 'disconnected' | 'connecting' | 'connected', message: string) {
   statusDiv.className = `status status-${status}`;
   statusMessage.textContent = message;
+  
+  // Update user status
+  if (status === 'connected') {
+    userStatus.textContent = 'Online';
+  } else if (status === 'connecting') {
+    userStatus.textContent = 'Connecting...';
+  } else {
+    userStatus.textContent = 'Offline';
+  }
 }
 
 /**
@@ -447,18 +428,21 @@ function updatePeersList() {
     
     return `
       <div class="peer-item ${peer.connected ? 'connected' : ''} ${isHost ? 'host' : ''}">
-        <div class="peer-info">
-          <div class="peer-indicator ${peer.connected ? (isSpeaking ? 'speaking' : 'connected') : ''}"></div>
-          <span><strong>${peer.username || peer.peerId}</strong></span>
-          ${isHost ? '<span class="host-badge">HOST</span>' : ''}
-          ${peer.connected && connectionLabel ? `<span class="connection-badge" title="${connectionLabel} connection">${connectionIcon}</span>` : ''}
-          ${isSpeaking ? '<span style="font-size: 12px;">🎤</span>' : ''}
+        <div class="peer-header">
+          <div class="peer-info">
+            <div class="peer-indicator ${peer.connected ? (isSpeaking ? 'speaking' : 'connected') : ''}"></div>
+            <span><strong>${peer.username || peer.peerId}</strong></span>
+            ${isHost ? '<span class="host-badge">HOST</span>' : ''}
+            ${isSpeaking ? '<span style="font-size: 12px;">🎤</span>' : ''}
+          </div>
+          <div class="peer-status-line">
+            <span style="font-size: 11px; color: var(--text-tertiary);">
+              ${peer.connected ? `${connectionLabel ? connectionIcon + ' ' + connectionLabel : '🔊 Connected'}` : '⏳ Connecting...'}
+            </span>
+            ${peer.connected ? qualityBars : ''}
+          </div>
         </div>
-        <div style="display: flex; align-items: center; gap: 0.5rem;">
-          ${peer.connected ? qualityBars : ''}
-          <span style="font-size: 12px; color: #6b7280;">
-            ${peer.connected ? `🔊 Connected${connectionLabel ? ' (' + connectionLabel + ')' : ''}` : '⏳ Connecting...'}
-          </span>
+        <div class="peer-actions">
           <button class="${screenBtnClass}" data-peer-id="${peer.peerId}" ${!isSharing ? 'disabled' : ''}>
             ${screenBtnText}
           </button>
@@ -706,6 +690,9 @@ async function connect() {
     const roomId = roomIdInput.value.trim();
     const username = usernameInput.value.trim() || 'Anonymous';
     const deviceId = audioDeviceSelect.value;
+    
+    // Update user display
+    currentUsername.textContent = username;
 
     if (!signalingUrl || !roomId) {
       alert('Please enter signaling server URL and room ID');
@@ -855,6 +842,25 @@ async function connect() {
     roomIdInput.disabled = true;
     usernameInput.disabled = true;
 
+    // Enable chat
+    chatInput.disabled = false;
+    chatInput.placeholder = 'Message #general-chat';
+    chatSendBtn.disabled = false;
+    chatImageBtn.disabled = false;
+    chatEmptyState.classList.add('hidden');
+
+    // Initialize button states
+    updateMuteButton();
+    updateDeafenButton();
+
+    // Switch to connected view
+    centeredConnection.style.display = 'none';
+    leftSidebar.style.display = 'flex';
+    mainContent.style.display = 'flex';
+    disconnectedView.style.display = 'none';
+    connectedView.style.display = 'flex';
+    rightSidebar.style.display = 'flex';
+
     updatePeersList();
     
     // Save settings
@@ -921,6 +927,21 @@ function disconnect() {
   roomIdInput.disabled = false;
   usernameInput.disabled = false;
   
+  // Disable chat
+  chatInput.disabled = true;
+  chatInput.placeholder = 'Connect to start chatting';
+  chatSendBtn.disabled = true;
+  chatImageBtn.disabled = true;
+  chatEmptyState.classList.remove('hidden');
+  
+  // Switch to disconnected view
+  centeredConnection.style.display = 'flex';
+  leftSidebar.style.display = 'none';
+  mainContent.style.display = 'none';
+  disconnectedView.style.display = 'none';
+  connectedView.style.display = 'none';
+  rightSidebar.style.display = 'none';
+  
   // Stop screen sharing if active
   if (isScreenSharing) {
     stopScreenShare();
@@ -930,6 +951,17 @@ function disconnect() {
   
   // Clear speaking state
   peerSpeakingState.clear();
+  
+  // Reset user display
+  currentUsername.textContent = 'User';
+  
+  // Clear all remote screens
+  const remoteScreenPeerIds = Array.from(remoteScreens.keys());
+  remoteScreenPeerIds.forEach(peerId => removeRemoteScreen(peerId));
+  
+  // Clear screen availability tracking
+  remoteScreenAvailable.clear();
+  screenViewers.clear();
 }
 
 /**
@@ -1486,14 +1518,30 @@ async function handleAudioDeviceChange() {
 function toggleMute() {
   if (!audioManager) return;
 
-  const muted = audioManager.toggleMute();
+  isMuted = audioManager.toggleMute();
   
-  if (muted) {
-    muteBtn.textContent = '🔇 Muted';
-    muteBtn.className = 'btn-muted';
+  // Play mute sound
+  if (isMuted) {
+    playNotificationSound('mute');
+  }
+  
+  updateMuteButton();
+}
+
+/**
+ * Update mute button state and icon
+ */
+function updateMuteButton() {
+  if (isMuted) {
+    muteBtn.classList.add('muted');
+    muteBtn.classList.remove('active');
+    muteBtn.innerHTML = '<span class="voice-icon">🔇</span>'; // Muted icon
+    muteBtn.title = 'Unmute';
   } else {
-    muteBtn.textContent = '🎤 Unmuted';
-    muteBtn.className = 'btn-success';
+    muteBtn.classList.remove('muted');
+    muteBtn.classList.add('active');
+    muteBtn.innerHTML = '<span class="voice-icon">🎤</span>'; // Mic icon
+    muteBtn.title = 'Mute';
   }
 }
 
@@ -1503,14 +1551,25 @@ function toggleMute() {
 function toggleDeafen() {
   if (!audioManager) return;
 
-  const deafened = audioManager.toggleDeafen();
+  isDeafened = audioManager.toggleDeafen();
   
-  if (deafened) {
-    deafenBtn.textContent = '🔇 Deafened';
-    deafenBtn.className = 'btn-muted';
+  updateDeafenButton();
+}
+
+/**
+ * Update deafen button state and icon
+ */
+function updateDeafenButton() {
+  if (isDeafened) {
+    deafenBtn.classList.add('muted');
+    deafenBtn.classList.remove('active');
+    deafenBtn.innerHTML = '<span class="voice-icon">🔇</span>'; // Deafened icon
+    deafenBtn.title = 'Undeafen';
   } else {
-    deafenBtn.textContent = '🔊 Listening';
-    deafenBtn.className = 'btn-success';
+    deafenBtn.classList.remove('muted');
+    deafenBtn.classList.add('active');
+    deafenBtn.innerHTML = '<span class="voice-icon">🔊</span>'; // Speaker icon
+    deafenBtn.title = 'Deafen';
   }
 }
 
@@ -1572,22 +1631,6 @@ function handlePushToTalkEnd() {
 }
 
 /**
- * Update mute button state
- */
-function updateMuteButton() {
-  if (!audioManager) return;
-  
-  const muted = audioManager.isMuted();
-  if (muted) {
-    muteBtn.textContent = '🔇 Muted';
-    muteBtn.className = 'btn-muted';
-  } else {
-    muteBtn.textContent = '🎤 Unmuted';
-    muteBtn.className = 'btn-success';
-  }
-}
-
-/**
  * Update audio settings
  */
 async function updateAudioSettings() {
@@ -1641,7 +1684,7 @@ disconnectBtn.addEventListener('click', disconnect);
 muteBtn.addEventListener('click', toggleMute);
 deafenBtn.addEventListener('click', toggleDeafen);
 pttToggleBtn.addEventListener('click', togglePushToTalk);
-themeToggleBtn.addEventListener('click', toggleTheme);
+// themeToggleBtn removed - always dark mode
 
 // Screen sharing listeners
 screenShareBtn.addEventListener('click', () => {
@@ -1692,10 +1735,35 @@ settingsToggle?.addEventListener('click', () => {
 document.addEventListener('keydown', handleKeyboard);
 document.addEventListener('keyup', handleKeyboard);
 
-// Chat event listeners
-chatToggleBtn.addEventListener('click', toggleChat);
-chatCloseBtn.addEventListener('click', toggleChat);
+// Settings modal
+settingsBtn.addEventListener('click', () => {
+  settingsModal.style.display = 'flex';
+});
 
+settingsBtnMain.addEventListener('click', () => {
+  settingsModal.style.display = 'flex';
+});
+
+settingsCloseBtn.addEventListener('click', () => {
+  settingsModal.style.display = 'none';
+});
+
+// Close modal on overlay click
+settingsModal.addEventListener('click', (e) => {
+  if (e.target === settingsModal) {
+    settingsModal.style.display = 'none';
+  }
+});
+
+// Close modal on Escape key
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && settingsModal.style.display === 'flex') {
+    settingsModal.style.display = 'none';
+    e.preventDefault();
+  }
+});
+
+// Chat event listeners
 chatSendBtn.addEventListener('click', sendTextMessage);
 
 chatInput.addEventListener('keydown', (e) => {
@@ -1795,12 +1863,6 @@ function handleChatMessage(message: ChatMessage) {
   // Play sound for incoming messages (not own)
   if (message.senderId !== peerId) {
     playNotificationSound('message');
-  }
-
-  // Update unread count if chat is closed
-  if (!isChatOpen && message.senderId !== peerId) {
-    unreadCount++;
-    updateUnreadBadge();
   }
 
   // Scroll to bottom
@@ -1928,34 +1990,6 @@ async function sendImageMessage(file: File) {
 }
 
 /**
- * Toggle chat panel
- */
-function toggleChat() {
-  isChatOpen = !isChatOpen;
-  
-  if (isChatOpen) {
-    chatPanel.classList.add('open');
-    unreadCount = 0;
-    updateUnreadBadge();
-    chatInput.focus();
-  } else {
-    chatPanel.classList.remove('open');
-  }
-}
-
-/**
- * Update unread badge
- */
-function updateUnreadBadge() {
-  if (unreadCount > 0) {
-    chatUnreadBadge.textContent = unreadCount > 99 ? '99+' : unreadCount.toString();
-    chatUnreadBadge.style.display = 'flex';
-  } else {
-    chatUnreadBadge.style.display = 'none';
-  }
-}
-
-/**
  * Format timestamp
  */
 function formatTime(timestamp: number): string {
@@ -2004,12 +2038,6 @@ function cleanupChat() {
   chatSendBtn.disabled = true;
   chatImageBtn.disabled = true;
   chatInput.value = '';
-  unreadCount = 0;
-  updateUnreadBadge();
-
-  if (isChatOpen) {
-    toggleChat();
-  }
 }
 
 // ============================================================================

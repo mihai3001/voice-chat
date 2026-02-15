@@ -3,68 +3,35 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Voice Chat P2P</title>
+  <title>VoiceLink</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
-      /* Light theme - Modern glassmorphism */
-      --bg-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
-      --bg-secondary: rgba(247, 248, 252, 0.7);
-      --surface-primary: rgba(255, 255, 255, 0.7);
-      --surface-secondary: rgba(255, 255, 255, 0.5);
-      --surface-elevated: rgba(255, 255, 255, 0.8);
-      --text-primary: #1a1a2e;
-      --text-secondary: #4a5568;
-      --text-tertiary: #718096;
-      --border-color: rgba(226, 232, 240, 0.4);
-      --border-hover: rgba(203, 213, 225, 0.6);
-      --accent: #06b6d4;
-      --accent-hover: #0891b2;
-      --accent-bg: rgba(6, 182, 212, 0.1);
-      --accent-light: rgba(6, 182, 212, 0.15);
-      --success: #10b981;
-      --success-bg: rgba(16, 185, 129, 0.1);
-      --warning: #f59e0b;
-      --warning-bg: rgba(245, 158, 11, 0.1);
-      --danger: #ef4444;
-      --danger-bg: rgba(239, 68, 68, 0.1);
-      --purple: #a855f7;
-      --purple-bg: rgba(168, 85, 247, 0.1);
-      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
-      --shadow: 0 4px 6px rgba(0, 0, 0, 0.07), 0 1px 3px rgba(0, 0, 0, 0.06);
-      --shadow-md: 0 10px 15px rgba(0, 0, 0, 0.1), 0 4px 6px rgba(0, 0, 0, 0.05);
-      --shadow-lg: 0 20px 25px rgba(0, 0, 0, 0.15), 0 10px 10px rgba(0, 0, 0, 0.04);
-      --shadow-xl: 0 25px 50px rgba(0, 0, 0, 0.25);
-      --blur: blur(20px);
-      --blur-lg: blur(40px);
-    }
-
-    [data-theme="dark"] {
-      /* Dark theme - Glassmorphism */
-      --bg-gradient: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #312e81 100%);
-      --bg-secondary: rgba(15, 23, 42, 0.5);
-      --surface-primary: rgba(30, 41, 59, 0.6);
-      --surface-secondary: rgba(15, 23, 42, 0.4);
-      --surface-elevated: rgba(51, 65, 85, 0.7);
-      --text-primary: #f1f5f9;
-      --text-secondary: #cbd5e1;
-      --text-tertiary: #94a3b8;
-      --border-color: rgba(71, 85, 105, 0.3);
-      --border-hover: rgba(100, 116, 139, 0.5);
-      --accent: #22d3ee;
-      --accent-hover: #06b6d4;
-      --accent-bg: rgba(34, 211, 238, 0.1);
-      --accent-light: rgba(34, 211, 238, 0.15);
-      --success: #34d399;
-      --success-bg: rgba(52, 211, 153, 0.1);
-      --warning: #fbbf24;
-      --warning-bg: rgba(251, 191, 36, 0.1);
-      --danger: #f87171;
-      --danger-bg: rgba(248, 113, 113, 0.1);
-      --purple: #c084fc;
-      --purple-bg: rgba(192, 132, 252, 0.1);
+      /* Dark theme - Discord-inspired grey palette */
+      --bg-gradient: linear-gradient(135deg, #1a1b1e 0%, #2b2d31 50%, #313338 100%);
+      --bg-secondary: rgba(26, 27, 30, 0.5);
+      --surface-primary: rgba(43, 45, 49, 0.6);
+      --surface-secondary: rgba(26, 27, 30, 0.4);
+      --surface-elevated: rgba(54, 57, 63, 0.7);
+      --text-primary: #f2f3f5;
+      --text-secondary: #b5bac1;
+      --text-tertiary: #80848e;
+      --border-color: rgba(79, 84, 92, 0.3);
+      --border-hover: rgba(79, 84, 92, 0.5);
+      --accent: #5865f2;
+      --accent-hover: #4752c4;
+      --accent-bg: rgba(88, 101, 242, 0.1);
+      --accent-light: rgba(88, 101, 242, 0.15);
+      --success: #3ba55d;
+      --success-bg: rgba(59, 165, 93, 0.1);
+      --warning: #faa81a;
+      --warning-bg: rgba(250, 168, 26, 0.1);
+      --danger: #ed4245;
+      --danger-bg: rgba(237, 66, 69, 0.1);
+      --purple: #a370f7;
+      --purple-bg: rgba(163, 112, 247, 0.1);
       --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
       --shadow: 0 4px 6px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.2);
       --shadow-md: 0 10px 15px rgba(0, 0, 0, 0.4), 0 4px 6px rgba(0, 0, 0, 0.3);
@@ -156,78 +123,327 @@
       display: flex;
       flex: 1;
       overflow: hidden;
-      gap: 1.5rem;
-      padding: 1.5rem;
+      gap: 0;
+      position: relative;
     }
 
-    .sidebar {
-      width: 320px;
+    /* Centered Connection View (when disconnected) */
+    .centered-connection {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--bg-gradient);
+      z-index: 10;
+    }
+
+    .centered-connection-card {
       background: var(--surface-primary);
       backdrop-filter: var(--blur);
       -webkit-backdrop-filter: var(--blur);
-      padding: 1.5rem;
+      border-radius: 24px;
+      padding: 3rem 2.5rem;
+      box-shadow: var(--shadow-xl);
+      border: 1px solid var(--border-color);
+      max-width: 480px;
+      width: 90%;
+    }
+
+    .centered-connection-card h2 {
+      font-size: 1.75rem;
+      font-weight: 800;
+      color: var(--text-primary);
+      margin-bottom: 2rem;
+      text-align: center;
+    }
+
+    /* Left Sidebar - Discord-like */
+    .left-sidebar {
+      width: 280px;
+      background: var(--surface-secondary);
+      backdrop-filter: var(--blur);
+      -webkit-backdrop-filter: var(--blur);
       display: flex;
       flex-direction: column;
-      gap: 1.25rem;
-      overflow-y: auto;
-      border-radius: 16px;
-      border: 1px solid var(--border-color);
-      box-shadow: var(--shadow-lg);
+      border-right: 1px solid var(--border-color);
       transition: all 0.3s ease;
     }
-    
-    .sidebar::-webkit-scrollbar {
+
+    /* Disconnected View */
+    .disconnected-view {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem 1.5rem;
+    }
+
+    .connection-form {
+      width: 100%;
+    }
+
+    .form-title {
+      font-size: 1.125rem;
+      font-weight: 700;
+      color: var(--text-primary);
+      margin-bottom: 1.5rem;
+      text-align: center;
+    }
+
+    .form-group {
+      margin-bottom: 1rem;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.5rem;
+    }
+
+    .btn-large {
+      width: 100%;
+      padding: 0.875rem 1.25rem;
+      font-size: 1rem;
+      font-weight: 700;
+    }
+
+    /* Connected View */
+    .connected-view {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .sidebar-peers-section {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1rem 0.75rem;
+    }
+
+    .sidebar-peers-section::-webkit-scrollbar {
       width: 6px;
     }
-    
-    .sidebar::-webkit-scrollbar-track {
+
+    .sidebar-peers-section::-webkit-scrollbar-track {
       background: transparent;
     }
-    
-    .sidebar::-webkit-scrollbar-thumb {
+
+    .sidebar-peers-section::-webkit-scrollbar-thumb {
       background: var(--border-color);
       border-radius: 3px;
     }
-    
-    .sidebar::-webkit-scrollbar-thumb:hover {
-      background: var(--border-hover);
+
+    .sidebar-section-title {
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: var(--text-tertiary);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.75rem;
+      padding: 0 0.5rem;
     }
 
+    /* User Controls Bar - Discord style */
+    .user-controls-bar {
+      background: var(--surface-elevated);
+      border-top: 1px solid var(--border-color);
+      padding: 0.75rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .user-info {
+      display: flex;
+      align-items: center;
+      gap: 0.625rem;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .user-avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1rem;
+      flex-shrink: 0;
+    }
+
+    .user-details {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+
+    .user-name {
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .user-status {
+      font-size: 0.6875rem;
+      color: var(--text-tertiary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .voice-controls {
+      display: flex;
+      gap: 0.5rem;
+      justify-content: flex-end;
+      flex-shrink: 0;
+    }
+
+    .disconnect-btn-compact {
+      padding: 0.375rem 0.75rem;
+      background: rgba(79, 84, 92, 0.4);
+      color: var(--text-primary);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      font-size: 0.75rem;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      white-space: nowrap;
+      margin-left: 0.5rem;
+      flex-shrink: 0;
+    }
+
+    .disconnect-btn-compact:hover {
+      background: rgba(79, 84, 92, 0.6);
+      border-color: var(--border-hover);
+      transform: translateY(-1px);
+    }
+
+    .voice-control-btn {
+      width: 32px;
+      height: 32px;
+      padding: 0;
+      background: transparent;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s ease;
+      position: relative;
+    }
+
+    .voice-control-btn:hover {
+      background: var(--accent-light);
+    }
+
+    .voice-control-btn.active {
+      background: var(--success);
+    }
+
+    .voice-control-btn.muted {
+      background: var(--danger);
+    }
+
+    .voice-icon {
+      font-size: 1.125rem;
+      filter: grayscale(0.3);
+    }
+
+    .voice-control-btn.active .voice-icon,
+    .voice-control-btn.muted .voice-icon {
+      filter: grayscale(0);
+    }
+
+    /* Main Content - Chat Area */
     .main-content {
       flex: 1;
-      padding: 0;
-      overflow-y: auto;
-    }
-    
-    .main-content::-webkit-scrollbar {
-      width: 8px;
-    }
-    
-    .main-content::-webkit-scrollbar-track {
-      background: transparent;
-    }
-    
-    .main-content::-webkit-scrollbar-thumb {
-      background: var(--border-color);
-      border-radius: 4px;
-    }
-    
-    .main-content::-webkit-scrollbar-thumb:hover {
-      background: var(--border-hover);
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-secondary);
+      overflow: hidden;
     }
 
-    .card {
+    .chat-container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+
+    .chat-header {
+      padding: 1rem 1.5rem;
       background: var(--surface-primary);
       backdrop-filter: var(--blur);
       -webkit-backdrop-filter: var(--blur);
-      border-radius: 16px;
-      padding: 2rem;
-      border: 1px solid var(--border-color);
-      box-shadow: var(--shadow-lg);
-      transition: all 0.3s ease;
-      height: 100%;
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .chat-header h2 {
+      font-size: 1.125rem;
+      font-weight: 700;
+      margin: 0;
+      color: var(--text-primary);
+    }
+
+    .chat-header-actions {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    /* Right Sidebar - Settings & Screens */
+    .right-sidebar {
+      width: 320px;
+      background: var(--surface-secondary);
+      backdrop-filter: var(--blur);
+      -webkit-backdrop-filter: var(--blur);
+      border-left: 1px solid var(--border-color);
+      padding: 1.25rem;
+      overflow-y: auto;
       display: flex;
       flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    .right-sidebar::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    .right-sidebar::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .right-sidebar::-webkit-scrollbar-thumb {
+      background: var(--border-color);
+      border-radius: 3px;
+    }
+
+    .screen-settings-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .btn-sm {
+      padding: 0.5rem 0.875rem;
+      font-size: 0.8125rem;
     }
 
     .connect-section {
@@ -235,17 +451,18 @@
       flex-direction: column;
       gap: 0.875rem;
     }
-    
-    .connect-section h3 {
+
+    .section-title {
       font-size: 0.875rem;
       font-weight: 700;
       color: var(--text-secondary);
       text-transform: uppercase;
       letter-spacing: 0.05em;
-      margin-bottom: 1rem;
+      margin-bottom: 0.5rem;
     }
 
     input, select {
+      width: 100%;
       padding: 0.75rem 1rem;
       border: 1px solid var(--border-color);
       border-radius: 10px;
@@ -284,15 +501,16 @@
     }
 
     .btn-primary {
-      background: linear-gradient(135deg, var(--accent), var(--accent-hover));
-      color: white;
-      border: 1px solid rgba(255, 255, 255, 0.2);
+      background: var(--surface-elevated);
+      color: var(--text-primary);
+      border: 1px solid var(--border-color);
     }
 
     .btn-primary:hover {
+      background: var(--surface-primary);
+      border-color: var(--border-hover);
       transform: translateY(-2px);
-      box-shadow: var(--shadow-lg), 0 0 20px var(--accent-light);
-      filter: brightness(1.1);
+      box-shadow: var(--shadow-md);
     }
     
     .btn-primary:active {
@@ -300,18 +518,36 @@
     }
 
     .btn-danger {
-      background: linear-gradient(135deg, var(--danger), #dc2626);
-      color: white;
-      border: 1px solid rgba(255, 255, 255, 0.2);
+      background: rgba(79, 84, 92, 0.4);
+      color: var(--text-primary);
+      border: 1px solid var(--border-color);
     }
 
     .btn-danger:hover {
+      background: rgba(79, 84, 92, 0.6);
+      border-color: var(--border-hover);
       transform: translateY(-2px);
-      box-shadow: var(--shadow-lg), 0 0 20px var(--danger-bg);
-      filter: brightness(1.1);
+      box-shadow: var(--shadow-md);
     }
     
     .btn-danger:active {
+      transform: translateY(0);
+    }
+
+    .btn-secondary {
+      background: rgba(79, 84, 92, 0.3);
+      color: var(--text-primary);
+      border: 1px solid var(--border-color);
+    }
+
+    .btn-secondary:hover {
+      background: rgba(79, 84, 92, 0.5);
+      border-color: var(--border-hover);
+      transform: translateY(-2px);
+      box-shadow: var(--shadow-md);
+    }
+    
+    .btn-secondary:active {
       transform: translateY(0);
     }
 
@@ -368,12 +604,14 @@
     }
     
     .btn-primary-sm {
-      background: var(--accent);
-      color: white;
+      background: var(--surface-elevated);
+      color: var(--text-primary);
+      border: 1px solid var(--border-color);
     }
     
     .btn-primary-sm:hover {
-      background: var(--accent-hover);
+      background: var(--surface-primary);
+      border-color: var(--border-hover);
       transform: scale(1.05);
     }
     
@@ -465,38 +703,58 @@
     .peers-list {
       display: flex;
       flex-direction: column;
-      gap: 10px;
+      gap: 0.375rem;
     }
 
     .peer-item {
       display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 1rem 1.25rem;
-      background: var(--surface-secondary);
-      backdrop-filter: var(--blur);
-      -webkit-backdrop-filter: var(--blur);
-      border-radius: 12px;
-      border: 1px solid var(--border-color);
+      flex-direction: column;
+      gap: 0.625rem;
+      padding: 0.75rem;
+      background: transparent;
+      border-radius: 6px;
       transition: all 0.2s ease;
-      box-shadow: var(--shadow);
+      cursor: pointer;
+      min-height: 80px;
     }
     
     .peer-item:hover {
-      background: var(--surface-elevated);
-      transform: translateX(4px);
-      box-shadow: var(--shadow-md);
-      border-color: var(--border-hover);
+      background: var(--accent-light);
+      transform: translateX(2px);
     }
 
     .peer-item.connected {
-      border: 2px solid var(--success);
-      background: var(--success-bg);
+      background: rgba(16, 185, 129, 0.05);
     }
     
     .peer-item.host {
-      border: 2px solid var(--accent);
-      background: var(--accent-bg);
+      background: rgba(6, 182, 212, 0.05);
+    }
+
+    .peer-header {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      width: 100%;
+    }
+
+    .peer-info {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .peer-status-line {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-shrink: 0;
+    }
+
+    .peer-actions {
+      display: flex;
+      gap: 0.5rem;
     }
 
     .connection-quality {
@@ -1252,71 +1510,13 @@
       50% { transform: translateY(-5px); }
     }
 
-    /* Chat Panel Styles */
-    .chat-panel {
-      position: fixed;
-      top: 0;
-      right: -400px;
-      width: 400px;
-      height: 100vh;
-      background: var(--surface-primary);
-      backdrop-filter: var(--blur);
-      -webkit-backdrop-filter: var(--blur);
-      border-left: 1px solid var(--border-color);
-      box-shadow: var(--shadow-xl);
-      display: flex;
-      flex-direction: column;
-      transition: right 0.3s ease;
-      z-index: 999;
-    }
-
-    .chat-panel.open {
-      right: 0;
-    }
-
-    .chat-header {
-      padding: 1.5rem;
-      border-bottom: 1px solid var(--border-color);
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      background: var(--surface-elevated);
-    }
-
-    .chat-header h2 {
-      margin: 0;
-      font-size: 1.25rem;
-      font-weight: 700;
-    }
-
-    .chat-close-btn {
-      background: none;
-      border: none;
-      font-size: 2rem;
-      line-height: 1;
-      color: var(--text-secondary);
-      cursor: pointer;
-      padding: 0;
-      width: 2rem;
-      height: 2rem;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: 50%;
-      transition: all 0.2s ease;
-    }
-
-    .chat-close-btn:hover {
-      background: var(--danger-bg);
-      color: var(--danger);
-      transform: scale(1.1);
-    }
+    /* Removed old chat panel - now center layout */
 
     .chat-messages {
       flex: 1;
       overflow-y: auto;
       overflow-x: hidden;
-      padding: 1rem;
+      padding: 1.5rem;
       display: flex;
       flex-direction: column;
       gap: 0.75rem;
@@ -1508,22 +1708,22 @@
 
     .chat-send-btn {
       padding: 0.875rem 1.5rem;
-      background: linear-gradient(135deg, var(--accent) 0%, #4752c4 100%);
-      color: white;
-      border: none;
+      background: var(--surface-elevated);
+      color: var(--text-primary);
+      border: 1px solid var(--border-color);
       border-radius: 12px;
       font-weight: 600;
       font-size: 0.875rem;
       cursor: pointer;
       transition: all 0.2s ease;
       white-space: nowrap;
-      box-shadow: 0 2px 8px rgba(88, 101, 242, 0.3);
     }
 
     .chat-send-btn:hover:not(:disabled) {
+      background: var(--surface-primary);
+      border-color: var(--border-hover);
       transform: translateY(-2px);
-      box-shadow: 0 4px 16px rgba(88, 101, 242, 0.4);
-      background: linear-gradient(135deg, #4752c4 0%, var(--accent) 100%);
+      box-shadow: var(--shadow-md);
     }
 
     .chat-send-btn:active:not(:disabled) {
@@ -1535,48 +1735,127 @@
       cursor: not-allowed;
     }
 
-    .chat-toggle-btn {
+    .chat-empty {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: var(--text-tertiary);
+      text-align: center;
+      font-size: 0.875rem;
+      padding: 2rem;
+    }
+
+    .chat-empty.hidden {
+      display: none;
+    }
+
+    /* Settings Modal */
+    .modal-overlay {
       position: fixed;
-      bottom: 2rem;
-      right: 2rem;
-      width: 4rem;
-      height: 4rem;
-      background: var(--accent);
-      color: white;
-      border: none;
-      border-radius: 50%;
-      font-size: 1.75rem;
-      cursor: pointer;
-      box-shadow: var(--shadow-lg);
-      transition: all 0.3s ease;
-      z-index: 998;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      position: relative;
-    }
-
-    .chat-toggle-btn:hover {
-      background: var(--accent-hover);
-      transform: scale(1.1);
-      box-shadow: var(--shadow-xl);
-    }
-
-    .chat-unread-badge {
-      position: absolute;
       top: 0;
+      left: 0;
       right: 0;
-      background: var(--danger);
-      color: white;
-      border-radius: 50%;
-      width: 1.5rem;
-      height: 1.5rem;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 0.75rem;
+      z-index: 1000;
+      animation: fadeIn 0.2s ease;
+    }
+
+    .modal-content {
+      background: var(--surface-primary);
+      backdrop-filter: var(--blur);
+      -webkit-backdrop-filter: var(--blur);
+      border-radius: 16px;
+      box-shadow: var(--shadow-xl);
+      border: 1px solid var(--border-color);
+      width: 90%;
+      max-width: 500px;
+      max-height: 80vh;
+      overflow: hidden;
+      animation: slideUp 0.3s ease;
+    }
+
+    .modal-header {
+      padding: 1.5rem;
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--surface-elevated);
+    }
+
+    .modal-header h2 {
+      margin: 0;
+      font-size: 1.25rem;
       font-weight: 700;
-      animation: pulse 2s infinite;
+      color: var(--text-primary);
+    }
+
+    .modal-close-btn {
+      background: none;
+      border: none;
+      font-size: 2rem;
+      line-height: 1;
+      color: var(--text-secondary);
+      cursor: pointer;
+      padding: 0;
+      width: 2rem;
+      height: 2rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 6px;
+      transition: all 0.2s ease;
+    }
+
+    .modal-close-btn:hover {
+      background: var(--danger-bg);
+      color: var(--danger);
+    }
+
+    .modal-body {
+      padding: 1.5rem;
+      overflow-y: auto;
+      max-height: calc(80vh - 80px);
+    }
+
+    .settings-section {
+      margin-bottom: 1.5rem;
+    }
+
+    .settings-section:last-child {
+      margin-bottom: 0;
+    }
+
+    .settings-section h3 {
+      font-size: 0.875rem;
+      font-weight: 700;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 1rem;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    @keyframes slideUp {
+      from {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
     }
 
     @keyframes slideIn {
@@ -1610,98 +1889,216 @@
   </div>
 
   <header>
-    <h1>🎙️ Voice Chat P2P</h1>
-    <button class="theme-toggle" id="theme-toggle">
-      <span id="theme-icon">🌙</span>
-      <span id="theme-text">Dark</span>
-    </button>
+    <h1>🎙️ VoiceLink</h1>
   </header>
 
   <div class="container">
-    <aside class="sidebar">
-      <div class="connect-section">
-        <h3 class="section-title">Connection Settings</h3>
+    <!-- Centered Connection View (shown when disconnected) -->
+    <div id="centered-connection" class="centered-connection">
+      <div class="centered-connection-card">
+        <h2>🎙️ Welcome to VoiceLink</h2>
         
-        <div>
-          <label for="signaling-url">Signaling Server</label>
-          <input 
-            type="text" 
-            id="signaling-url" 
-            placeholder="https://voice-chat-signaling-production.up.railway.app"
-            value="https://voice-chat-signaling-production.up.railway.app"
-          />
-        </div>
+        <div class="connection-form">
+          <div class="form-group">
+            <label for="signaling-url">Signaling Server</label>
+            <input 
+              type="text" 
+              id="signaling-url" 
+              placeholder="https://voice-chat-signaling-production.up.railway.app"
+              value="https://voice-chat-signaling-production.up.railway.app"
+            />
+          </div>
 
-        <div>
-          <label for="room-id">Room ID</label>
-          <input 
-            type="text" 
-            id="room-id" 
-            placeholder="my-room"
-            value="test-room"
-          />
-        </div>
+          <div class="form-group">
+            <label for="room-id">Room ID</label>
+            <input 
+              type="text" 
+              id="room-id" 
+              placeholder="my-room" 
+              value="test-room"
+            />
+          </div>
 
-        <div>
-          <label for="username">Username</label>
-          <input 
-            type="text" 
-            id="username" 
-            placeholder="Your name"
-          />
-        </div>
+          <div class="form-group">
+            <label for="username">Username</label>
+            <input 
+              type="text" 
+              id="username" 
+              placeholder="Your name"
+            />
+          </div>
 
-        <div class="audio-device-select">
-          <label for="audio-device">Audio Input</label>
-          <select id="audio-device">
-            <option value="">Default</option>
-          </select>
+          <button id="connect-btn" class="btn-primary btn-large">Connect</button>
+          <button id="settings-btn-main" class="btn-secondary btn-large" style="margin-top: 0.75rem;">⚙️ Settings</button>
         </div>
+      </div>
+    </div>
 
-        <button id="connect-btn" class="btn-primary">Connect</button>
-        <button id="disconnect-btn" class="btn-danger" style="display: none;">Disconnect</button>
+    <!-- Left Sidebar (only visible when connected) -->
+    <aside id="left-sidebar" class="left-sidebar" style="display: none;">
+      <!-- Not Connected View (hidden, kept for compatibility) -->
+      <div id="disconnected-view" class="disconnected-view" style="display: none;">
+        <div class="connection-form">
+          <h3 class="form-title">Join Voice Channel</h3>
+          
+          <div class="form-group">
+            <label for="signaling-url">Signaling Server</label>
+            <input 
+              type="text" 
+              id="signaling-url" 
+              placeholder="https://voice-chat-signaling-production.up.railway.app"
+              value="https://voice-chat-signaling-production.up.railway.app"
+            />
+          </div>
+
+          <div class="form-group">
+            <label for="room-id">Room ID</label>
+            <input 
+              type="text" 
+              id="room-id" 
+              placeholder="my-room"
+              value="test-room"
+            />
+          </div>
+
+          <div class="form-group">
+            <label for="username">Username</label>
+            <input 
+              type="text" 
+              id="username" 
+              placeholder="Your name"
+            />
+          </div>
+
+          <button id="connect-btn" class="btn-primary btn-large">Connect</button>
+          <button id="settings-btn-main" class="btn-secondary btn-large" style="margin-top: 0.75rem;">⚙️ Settings</button>
+        </div>
       </div>
 
-      <div class="controls">
-        <div class="controls-row">
-          <button id="mute-btn" class="btn-success" disabled>🎤 Unmuted</button>
-          <button id="deafen-btn" class="btn-success" disabled>🔊 Listening</button>
-        </div>
-        <div class="controls-row">
-          <button id="ptt-toggle-btn" class="btn-primary" disabled>🔄 Push-to-Talk: OFF</button>
-          <button id="screen-share-btn" class="btn-primary" disabled>🖥️ Share Screen</button>
-        </div>
-        <div class="controls-row">
-          <label for="screen-quality" style="margin-right: 0.5rem; color: var(--text-secondary);">Screen Quality:</label>
-          <select id="screen-quality" class="quality-select">
-            <option value="720p15">720p @ 15fps</option>
-            <option value="720p30">720p @ 30fps</option>
-            <option value="720p60">720p @ 60fps</option>
-            <option value="1080p30" selected>1080p @ 30fps</option>
-            <option value="1080p60">1080p @ 60fps</option>
-            <option value="1080p144">1080p @ 144fps</option>
-            <option value="1440p60">1440p @ 60fps</option>
-            <option value="1440p144">1440p @ 144fps</option>
-            <option value="4k60">4K @ 60fps</option>
-          </select>
-        </div>
-        <div id="ptt-indicator" class="ptt-indicator">Hold SPACE to talk</div>
-        
-        <!-- Screen sharing container -->
-        <div id="screen-container" class="screen-container" style="display: none;">
-          <div class="screen-header">
-            <span id="screen-title">Your Screen</span>
-            <button id="stop-screen-btn" class="btn-danger-sm">Stop</button>
+      <!-- Connected View -->
+      <div id="connected-view" class="connected-view" style="display: none;">
+        <!-- Peers List -->
+        <div class="sidebar-peers-section">
+          <h3 class="sidebar-section-title">VOICE CHANNEL</h3>
+          <div id="status" class="status status-disconnected">
+            <span id="status-message">Not connected</span>
           </div>
-          <video id="local-screen" autoplay muted playsinline></video>
-        </div>
-        
-        <div class="settings-panel">
-          <div class="settings-header" id="settings-toggle">
-            <h4>⚙️ Audio Settings</h4>
-            <span class="settings-arrow">▼</span>
+          <div id="peers-list" class="peers-list">
+            <div class="empty-state">
+              <p>No one in voice</p>
+            </div>
           </div>
-          <div class="settings-content" id="settings-content">
+        </div>
+
+        <!-- User Controls Bar (Discord-style) -->
+        <div class="user-controls-bar">
+          <div class="user-info">
+            <div class="user-avatar">👤</div>
+            <div class="user-details">
+              <div class="user-name" id="current-username">User</div>
+              <div class="user-status" id="user-status">Offline</div>
+            </div>
+            <button id="disconnect-btn" class="disconnect-btn-compact">🚪 Disconnect</button>
+          </div>
+          <div class="voice-controls">
+            <button id="mute-btn" class="voice-control-btn" disabled title="Mute">
+              <span class="voice-icon">🎤</span>
+            </button>
+            <button id="deafen-btn" class="voice-control-btn" disabled title="Deafen">
+              <span class="voice-icon">🔊</span>
+            </button>
+            <button id="screen-share-btn" class="voice-control-btn" disabled title="Share Screen">
+              <span class="voice-icon">🖥️</span>
+            </button>
+            <button id="settings-btn" class="voice-control-btn" title="Settings">
+              <span class="voice-icon">⚙️</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content (Chat - only visible when connected) -->
+    <main id="main-content" class="main-content" style="display: none;">
+      <div class="chat-container">
+        <div class="chat-header">
+          <h2># general-chat</h2>
+          <div class="chat-header-actions">
+            <div id="topology-info" class="topology-info" style="display: none;">
+              <span class="topology-badge" id="topology-badge">Mesh</span>
+              <span id="peer-count">0</span> peers
+            </div>
+          </div>
+        </div>
+
+        <div class="chat-messages" id="chat-messages">
+          <div class="chat-empty" id="chat-empty-state">
+            <p>Connect to a room to start chatting</p>
+          </div>
+        </div>
+
+        <div class="chat-input-container">
+          <input 
+            type="file" 
+            id="chat-image-input" 
+            accept="image/*" 
+            style="display: none;"
+          />
+          <button id="chat-image-btn" class="chat-image-btn" title="Send image" disabled>
+            📷
+          </button>
+          <input 
+            type="text" 
+            id="chat-input" 
+            class="chat-input" 
+            placeholder="Connect to start chatting" 
+            disabled
+          />
+          <button id="chat-send-btn" class="chat-send-btn" disabled>
+            Send
+          </button>
+        </div>
+      </div>
+    </main>
+
+    <!-- Right Sidebar (Screens - only when connected) -->
+    <aside id="right-sidebar" class="right-sidebar" style="display: none;">
+      <!-- Local Screen Preview -->
+      <div id="screen-container" class="screen-container" style="display: none;">
+        <div class="screen-header">
+          <span id="screen-title">Your Screen</span>
+          <button id="stop-screen-btn" class="btn-danger-sm">Stop</button>
+        </div>
+        <video id="local-screen" autoplay muted playsinline></video>
+      </div>
+
+      <!-- Remote screens container -->
+      <div id="remote-screens-container" class="remote-screens-container" style="display: none;">
+        <h3 class="sidebar-section-title">SHARED SCREENS</h3>
+        <div id="remote-screens" class="remote-screens"></div>
+      </div>
+    </aside>
+
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="modal-overlay" style="display: none;">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>⚙️ Settings</h2>
+          <button id="settings-close-btn" class="modal-close-btn">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="settings-section">
+            <h3>Audio Devices</h3>
+            <div class="setting-item" style="display: block;">
+              <label for="audio-device" style="display: block; margin-bottom: 0.5rem; font-weight: 500;">Audio Input Device</label>
+              <select id="audio-device" class="quality-select" style="width: 100%;">
+                <option value="">Default</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <h3>Audio Processing</h3>
             <div class="setting-item">
               <span>Echo Cancellation</span>
               <label class="toggle-switch">
@@ -1724,87 +2121,37 @@
               </label>
             </div>
           </div>
-        </div>
-        
-        <div class="shortcuts-hint">
-          <strong>Shortcuts:</strong> <kbd>M</kbd> Mute • <kbd>D</kbd> Deafen • <kbd>Space</kbd> PTT • <kbd>Esc</kbd> Quit
-        </div>
-      </div>
-    </aside>
 
-    <main class="main-content">
-      <div class="card">
-        <div id="status" class="status status-disconnected">
-          <span id="status-message">Not connected</span>
-        </div>
-
-        <div id="topology-info" class="topology-info" style="display: none;">
-          <div>
-            <strong>Topology:</strong> <span id="topology-mode">Mesh</span>
-            <span class="topology-badge" id="topology-badge">Mesh</span>
+          <div class="settings-section">
+            <h3>Screen Sharing</h3>
+            <div class="setting-item">
+              <label for="screen-quality">Quality Preset</label>
+              <select id="screen-quality" class="quality-select">
+                <option value="720p15">720p @ 15fps</option>
+                <option value="720p30">720p @ 30fps</option>
+                <option value="720p60">720p @ 60fps</option>
+                <option value="1080p30" selected>1080p @ 30fps</option>
+                <option value="1080p60">1080p @ 60fps</option>
+                <option value="1080p144">1080p @ 144fps</option>
+                <option value="1440p60">1440p @ 60fps</option>
+                <option value="1440p144">1440p @ 144fps</option>
+                <option value="4k60">4K @ 60fps</option>
+              </select>
+            </div>
           </div>
-          <div>
-            <strong>Peers:</strong> <span id="peer-count">0</span>
-          </div>
-        </div>
 
-        <h3 class="section-title">Peers in Room</h3>
-        
-        <div id="peers-list" class="peers-list">
-          <div class="empty-state">
-            <p>Connect to a room to see peers</p>
+          <div class="settings-section">
+            <h3>Push-to-Talk</h3>
+            <button id="ptt-toggle-btn" class="btn-primary btn-block">🔄 Push-to-Talk: OFF</button>
+            <div id="ptt-indicator" class="ptt-indicator" style="margin-top: 0.75rem;">Hold SPACE to talk</div>
+            <div class="shortcuts-hint" style="margin-top: 1rem;">
+              <strong>Shortcuts:</strong><br>
+              <kbd>M</kbd> Mute • <kbd>D</kbd> Deafen • <kbd>Space</kbd> PTT
+            </div>
           </div>
         </div>
-        
-        <!-- Remote screens container -->
-        <div id="remote-screens-container" class="remote-screens-container" style="display: none;">
-          <h3 class="section-title">Shared Screens</h3>
-          <div id="remote-screens" class="remote-screens"></div>
-        </div>
       </div>
-    </main>
-
-    <!-- Chat Panel -->
-    <aside id="chat-panel" class="chat-panel">
-      <div class="chat-header">
-        <h2>💬 Chat</h2>
-        <button id="chat-close-btn" class="chat-close-btn" title="Close chat">×</button>
-      </div>
-
-      <div class="chat-messages" id="chat-messages">
-        <div class="chat-empty">
-          <p>No messages yet. Start the conversation!</p>
-        </div>
-      </div>
-
-      <div class="chat-input-container">
-        <input 
-          type="file" 
-          id="chat-image-input" 
-          accept="image/*" 
-          style="display: none;"
-        />
-        <button id="chat-image-btn" class="chat-image-btn" title="Send image">
-          📷
-        </button>
-        <input 
-          type="text" 
-          id="chat-input" 
-          class="chat-input" 
-          placeholder="Type a message..." 
-          disabled
-        />
-        <button id="chat-send-btn" class="chat-send-btn" disabled>
-          Send
-        </button>
-      </div>
-    </aside>
-
-    <!-- Chat toggle button (floating) -->
-    <button id="chat-toggle-btn" class="chat-toggle-btn" title="Toggle chat">
-      💬
-      <span id="chat-unread-badge" class="chat-unread-badge" style="display: none;">0</span>
-    </button>
+    </div>
   </div>
 
   <script src="vendor/socket.io.min.js"></script>

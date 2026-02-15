@@ -57,9 +57,11 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: true,
-      preload: path.join(__dirname, 'preload.cjs')
+      preload: path.join(__dirname, 'preload.cjs'),
+      devTools: false // Disable developer console
     },
-    title: 'Voice Chat P2P',
+    title: '🎙️ VoiceLink',
+    autoHideMenuBar: true, // Hide menu bar (File/Edit/etc)
     fullscreenable: true, // Allow fullscreen mode
     simpleFullscreen: false // Use native fullscreen on macOS
   });
