@@ -54,9 +54,10 @@ jobs:
         working-directory: packages/desktop-app
         run: |
           echo "Starting electron-builder..."
-          pnpm package -- --publish never
+          pnpm package
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
+          ELECTRON_BUILDER_ALLOW_UNRESOLVED_DEPENDENCIES: true
       
       - name: List release artifacts
         if: always()

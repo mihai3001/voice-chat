@@ -43,13 +43,6 @@
       "src/renderer/index.html",
       "package.json"
     ],
-    "publish": [
-      {
-        "provider": "github",
-        "owner": "mihai3001",
-        "repo": "voice-chat"
-      }
-    ],
     "win": {
       "target": [
         {
