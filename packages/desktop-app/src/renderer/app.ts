@@ -1,5 +1,8 @@
-import { io, Socket } from 'socket.io-client';
 import { MeshConnection, AudioManager, ChatManager, ChatMessage } from '@voice-chat/client-core';
+
+// Socket.io loaded from CDN
+declare const io: any;
+type Socket = any;
 
 // State
 let socket: Socket | null = null;
