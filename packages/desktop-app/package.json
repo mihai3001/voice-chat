@@ -1,6 +1,6 @@
 {
   "name": "@voice-chat/desktop-app",
-  "version": "1.3.4",
+  "version": "1.3.5",
   "description": "Electron desktop application for voice chat",
   "author": "Voice Chat Team",
   "main": "dist/main.js",
@@ -46,7 +46,8 @@
     "publish": {
       "provider": "github",
       "owner": "mihai3001",
-      "repo": "voice-chat"
+      "repo": "voice-chat",
+      "releaseType": "release"
     },
     "win": {
       "target": [
