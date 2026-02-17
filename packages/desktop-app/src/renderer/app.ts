@@ -1289,6 +1289,39 @@ function stopScreenShare() {
 }
 
 /**
+ * Open fullscreen overlay with a screen share stream
+ */
+function openFullscreenOverlay(stream: MediaStream | null, peerId: string) {
+  const overlay = document.getElementById('fullscreen-overlay');
+  const video = document.getElementById('fullscreen-video') as HTMLVideoElement;
+  const label = document.getElementById('fullscreen-peer-label');
+  const closeBtn = document.getElementById('fullscreen-close-overlay');
+
+  if (!overlay || !video) return;
+
+  video.srcObject = stream;
+  if (label) label.textContent = peerId;
+  overlay.classList.add('active');
+
+  const close = () => {
+    overlay.classList.remove('active');
+    video.srcObject = null;
+  };
+
+  // Close button
+  closeBtn?.addEventListener('click', close, { once: true });
+
+  // ESC key
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      close();
+      document.removeEventListener('keydown', onKey);
+    }
+  };
+  document.addEventListener('keydown', onKey);
+}
+
+/**
  * Handle remote screen share
  */
 function handleRemoteScreen(peerId: string, stream: MediaStream) {
@@ -1304,53 +1337,17 @@ function handleRemoteScreen(peerId: string, stream: MediaStream) {
       <div class="screen-header">
         <span>${peerId}</span>
         <button class="fullscreen-btn" title="Full Screen">⛶</button>
-        <button class="fullscreen-close-btn" title="Close" style="display: none;">✕</button>
       </div>
       <video autoplay playsinline></video>
     `;
     remoteScreensDiv.appendChild(screenItem);
     
-    // Add full screen button handlers
+    // Add full screen button handler — opens overlay
     const fullscreenBtn = screenItem.querySelector('.fullscreen-btn') as HTMLButtonElement;
-    const fullscreenCloseBtn = screenItem.querySelector('.fullscreen-close-btn') as HTMLButtonElement;
     const video = screenItem.querySelector('video') as HTMLVideoElement;
     
-    const exitFullscreen = () => {
-      console.log('Exiting fullscreen mode');
-      if (document.fullscreenElement) {
-        document.exitFullscreen().catch(() => {});
-      }
-      screenItem!.classList.remove('fullscreen-active');
-      fullscreenBtn.style.display = 'block';
-      fullscreenCloseBtn.style.display = 'none';
-    };
-    
-    const enterFullscreen = () => {
-      console.log('Entering fullscreen mode');
-      screenItem!.classList.add('fullscreen-active');
-      fullscreenBtn.style.display = 'none';
-      fullscreenCloseBtn.style.display = 'block';
-      // Use native Fullscreen API for true fullscreen
-      screenItem!.requestFullscreen().catch((err: Error) => {
-        console.warn('Could not enter fullscreen:', err);
-      });
-    };
-    
     fullscreenBtn.addEventListener('click', () => {
-      enterFullscreen();
-    });
-    
-    fullscreenCloseBtn.addEventListener('click', () => {
-      exitFullscreen();
-    });
-    
-    // Listen for native fullscreen exit (ESC key handled by browser)
-    document.addEventListener('fullscreenchange', () => {
-      if (!document.fullscreenElement && screenItem!.classList.contains('fullscreen-active')) {
-        screenItem!.classList.remove('fullscreen-active');
-        fullscreenBtn.style.display = 'block';
-        fullscreenCloseBtn.style.display = 'none';
-      }
+      openFullscreenOverlay(video.srcObject as MediaStream, peerId);
     });
   }
   
