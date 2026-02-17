@@ -18,9 +18,20 @@ jobs:
         os: [windows-latest]
         # Temporarily disabled: macos-latest, ubuntu-latest
     
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Configure git credentials
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
+        shell: bash
       
       - name: Setup Node.js
         uses: actions/setup-node@v3
@@ -44,7 +55,6 @@ jobs:
           pnpm build
           pnpm exec electron-builder --publish always
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: false
           ELECTRON_BUILDER_ALLOW_UNRESOLVED_DEPENDENCIES: true
 
