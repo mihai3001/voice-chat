@@ -70,6 +70,22 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
           ELECTRON_BUILDER_ALLOW_UNRESOLVED_DEPENDENCIES: true
+
+      - name: List release artifacts
+        if: always()
+        run: |
+          echo "Checking release folder..."
+          if (Test-Path packages\desktop-app\release) {
+            Get-ChildItem packages\desktop-app\release -Recurse | Select-Object FullName, Length
+          } else {
+            echo "Release folder does not exist!"
+          }
+        shell: pwsh
+
+      - name: Get version from tag
+        id: version
+        run: echo "VERSION=${{ github.ref_name }}" | sed 's/^VERSION=v/VERSION=/' >> $GITHUB_ENV
+        shell: bash
       
       - name: Upload Windows NSIS Installer
         uses: actions/upload-release-asset@v1
@@ -77,7 +93,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: packages/desktop-app/release/VoiceLink Setup ${{ github.ref_name }}.exe
+          asset_path: packages/desktop-app/release/VoiceLink Setup ${{ env.VERSION }}.exe
           asset_name: VoiceLink-Setup-${{ github.ref_name }}.exe
           asset_content_type: application/octet-stream
       
@@ -87,7 +103,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: packages/desktop-app/release/VoiceLink ${{ github.ref_name }}.exe
+          asset_path: packages/desktop-app/release/VoiceLink ${{ env.VERSION }}.exe
           asset_name: VoiceLink-Portable-${{ github.ref_name }}.exe
           asset_content_type: application/octet-stream
       
@@ -100,14 +116,3 @@ jobs:
           asset_path: packages/desktop-app/release/latest.yml
           asset_name: latest.yml
           asset_content_type: text/yaml
-      
-      - name: List release artifacts
-        if: always()
-        run: |
-          echo "Checking release folder..."
-          if (Test-Path packages\desktop-app\release) {
-            Get-ChildItem packages\desktop-app\release -Recurse | Select-Object FullName, Length
-          } else {
-            echo "Release folder does not exist!"
-          }
-        shell: pwsh
