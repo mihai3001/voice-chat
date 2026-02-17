@@ -279,6 +279,35 @@
       justify-content: center;
       font-size: 1rem;
       flex-shrink: 0;
+      position: relative;
+    }
+
+    .avatar-icon {
+      transition: opacity 0.2s;
+    }
+
+    .speaking-indicator {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 1.2rem;
+      animation: pulse 0.8s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% {
+        transform: translate(-50%, -50%) scale(1);
+        opacity: 1;
+      }
+      50% {
+        transform: translate(-50%, -50%) scale(1.15);
+        opacity: 0.8;
+      }
+    }
+
+    .user-avatar.speaking .avatar-icon {
+      opacity: 0.3;
     }
 
     .user-details {
@@ -1993,7 +2022,10 @@
         <!-- User Controls Bar (Discord-style) -->
         <div class="user-controls-bar">
           <div class="user-info">
-            <div class="user-avatar">👤</div>
+            <div class="user-avatar" id="user-avatar">
+              <span class="avatar-icon">👤</span>
+              <span class="speaking-indicator" id="speaking-indicator" style="display: none;">🎤</span>
+            </div>
             <div class="user-details">
               <div class="user-name" id="current-username">User</div>
               <div class="user-status" id="user-status">Offline</div>
@@ -2090,8 +2122,14 @@
           <div class="settings-section">
             <h3>Audio Devices</h3>
             <div class="setting-item" style="display: block;">
-              <label for="audio-device" style="display: block; margin-bottom: 0.5rem; font-weight: 500;">Audio Input Device</label>
-              <select id="audio-device" class="quality-select" style="width: 100%;">
+              <label for="audio-input-device" style="display: block; margin-bottom: 0.5rem; font-weight: 500;">Audio Input Device</label>
+              <select id="audio-input-device" class="quality-select" style="width: 100%;">
+                <option value="">Default</option>
+              </select>
+            </div>
+            <div class="setting-item" style="display: block; margin-top: 1rem;">
+              <label for="audio-output-device" style="display: block; margin-bottom: 0.5rem; font-weight: 500;">Audio Output Device</label>
+              <select id="audio-output-device" class="quality-select" style="width: 100%;">
                 <option value="">Default</option>
               </select>
             </div>

@@ -29,6 +29,9 @@ export class AudioManager {
   // Remote audio elements (peerId -> HTMLAudioElement)
   private remoteAudioElements = new Map<string, HTMLAudioElement>();
   
+  // Current output device ID
+  private currentOutputDevice = '';
+  
   // Voice activity detection
   private vadAnalysers = new Map<string, { analyser: AnalyserNode; dataArray: Uint8Array<ArrayBuffer> }>;
   
@@ -356,8 +359,20 @@ export class AudioManager {
     audio.muted = this.deafened; // Apply current deafen state
     audio.id = `audio-${peerId}`;
     
+    // Apply current output device
+    if (this.currentOutputDevice && typeof (audio as any).setSinkId === 'function') {
+      (audio as any).setSinkId(this.currentOutputDevice).catch((err: Error) => {
+        console.warn(`[AudioManager] Could not set output device for ${peerId}:`, err);
+      });
+    }
+    
     // Add to DOM (hidden)
     document.body.appendChild(audio);
+    
+    // Explicitly play to ensure audio starts
+    audio.play().catch(err => {
+      console.warn(`[AudioManager] Autoplay blocked for ${peerId}:`, err);
+    });
     
     this.remoteAudioElements.set(peerId, audio);
     
@@ -365,6 +380,25 @@ export class AudioManager {
     this.setupVoiceActivityDetection(peerId, stream);
     
     console.log(`[AudioManager] Added remote stream for peer: ${peerId}`);
+  }
+  
+  /**
+   * Set audio output device for all remote streams
+   */
+  async setOutputDevice(deviceId: string): Promise<void> {
+    this.currentOutputDevice = deviceId;
+    
+    for (const [peerId, audio] of this.remoteAudioElements) {
+      if (typeof (audio as any).setSinkId === 'function') {
+        try {
+          await (audio as any).setSinkId(deviceId || '');
+        } catch (err) {
+          console.warn(`[AudioManager] Could not set output device for ${peerId}:`, err);
+        }
+      }
+    }
+    
+    console.log(`[AudioManager] Output device set to: ${deviceId || 'default'}`);
   }
   
   /**

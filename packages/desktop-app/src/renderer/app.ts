@@ -160,7 +160,8 @@ const defaultUsername = randomNames[Math.floor(Math.random() * randomNames.lengt
 const signalingUrlInput = document.getElementById('signaling-url') as HTMLInputElement;
 const roomIdInput = document.getElementById('room-id') as HTMLInputElement;
 const usernameInput = document.getElementById('username') as HTMLInputElement;
-const audioDeviceSelect = document.getElementById('audio-device') as HTMLSelectElement;
+const audioInputDeviceSelect = document.getElementById('audio-input-device') as HTMLSelectElement;
+const audioOutputDeviceSelect = document.getElementById('audio-output-device') as HTMLSelectElement;
 const connectBtn = document.getElementById('connect-btn') as HTMLButtonElement;
 const disconnectBtn = document.getElementById('disconnect-btn') as HTMLButtonElement;
 const muteBtn = document.getElementById('mute-btn') as HTMLButtonElement;
@@ -177,6 +178,8 @@ const peerCount = document.getElementById('peer-count') as HTMLSpanElement;
 const echoCancellationToggle = document.getElementById('echo-cancellation') as HTMLInputElement;
 const noiseSuppressionToggle = document.getElementById('noise-suppression') as HTMLInputElement;
 const autoGainControlToggle = document.getElementById('auto-gain-control') as HTMLInputElement;
+const userAvatar = document.getElementById('user-avatar') as HTMLDivElement;
+const speakingIndicator = document.getElementById('speaking-indicator') as HTMLSpanElement;
 
 // Screen sharing elements
 const screenShareBtn = document.getElementById('screen-share-btn') as HTMLButtonElement;
@@ -335,14 +338,24 @@ async function initAudioManager() {
  */
 function updateAudioDeviceList(devices: any[]) {
   const inputDevices = devices.filter(d => d.kind === 'audioinput');
+  const outputDevices = devices.filter(d => d.kind === 'audiooutput');
   
-  audioDeviceSelect.innerHTML = '<option value="">Default</option>';
-  
+  // Update input devices
+  audioInputDeviceSelect.innerHTML = '<option value="">Default</option>';
   inputDevices.forEach(device => {
     const option = document.createElement('option');
     option.value = device.deviceId;
     option.textContent = device.label;
-    audioDeviceSelect.appendChild(option);
+    audioInputDeviceSelect.appendChild(option);
+  });
+
+  // Update output devices
+  audioOutputDeviceSelect.innerHTML = '<option value="">Default</option>';
+  outputDevices.forEach(device => {
+    const option = document.createElement('option');
+    option.value = device.deviceId;
+    option.textContent = device.label;
+    audioOutputDeviceSelect.appendChild(option);
   });
 }
 
@@ -506,7 +519,7 @@ async function reconnectAudio() {
   updateStatus('connecting', 'Reconnecting audio...');
   
   try {
-    const deviceId = audioDeviceSelect.value;
+    const deviceId = audioInputDeviceSelect.value;
     
     // Stop and restart audio
     audioManager?.stopCapture();
@@ -679,7 +692,7 @@ async function connect() {
     const signalingUrl = signalingUrlInput.value.trim();
     const roomId = roomIdInput.value.trim();
     const username = usernameInput.value.trim() || 'Anonymous';
-    const deviceId = audioDeviceSelect.value;
+    const deviceId = audioInputDeviceSelect.value;
     
     // Update user display
     currentUsername.textContent = username;
@@ -862,6 +875,9 @@ async function connect() {
     // Start connection quality monitoring
     startConnectionQualityMonitoring();
     
+    // Setup local voice activity detection
+    setupLocalVoiceActivity();
+    
     // Initialize chat
     initializeChat();
     
@@ -883,6 +899,9 @@ function disconnect() {
   
   // Stop connection quality monitoring
   stopConnectionQualityMonitoring();
+  
+  // Stop local voice activity detection
+  cleanupLocalVoiceActivity();
   
   // Cleanup chat
   cleanupChat();
@@ -1227,6 +1246,21 @@ async function startScreenShare() {
  * Stop screen sharing
  */
 function stopScreenShare() {
+  // Remove screen stream from all viewer peer connections BEFORE stopping tracks
+  if (meshConnection && screenStream) {
+    console.log('Removing screen stream from all viewers...');
+    for (const viewerPeerId of screenViewers) {
+      const peerInfo = meshConnection.getPeer(viewerPeerId);
+      if (peerInfo) {
+        try {
+          peerInfo.connection.removeStream(screenStream);
+        } catch (err) {
+          console.error(`Error removing screen from ${viewerPeerId}:`, err);
+        }
+      }
+    }
+  }
+
   if (screenStream) {
     screenStream.getTracks().forEach(track => track.stop());
     screenStream = null;
@@ -1243,25 +1277,12 @@ function stopScreenShare() {
   // Clear viewers list
   screenViewers.clear();
   
-  // Notify peers and remove video tracks
+  // Notify peers
   if (socket && connected && currentRoomId) {
     socket.emit('screen-unavailable', {
       roomId: currentRoomId,
       peerId: peerId
     });
-  }
-  
-  // Remove video tracks from peer connections
-  if (meshConnection && audioManager) {
-    console.log('Removing screen video tracks from peer connections...');
-    
-    // Get audio-only stream
-    const audioOnlyStream = audioManager.getLocalStream();
-    if (audioOnlyStream) {
-      // Update mesh connection back to audio only
-      meshConnection.updateStream(audioOnlyStream);
-      console.log('Removed screen sharing, back to audio only');
-    }
   }
   
   console.log('Screen sharing stopped');
@@ -1436,14 +1457,10 @@ function addScreenToViewer(viewerPeerId: string) {
     return;
   }
   
-  // Add only the video tracks to the existing peer connection
-  // Audio tracks are already being sent, no need to touch them
+  // Add the screen stream as a separate stream (SimplePeer supports multiple streams)
   try {
-    screenStream.getVideoTracks().forEach(track => {
-      peerInfo.connection.addTrack(track, screenStream);
-      console.log(`Added video track to ${viewerPeerId}`);
-    });
-    console.log(`Screen video added for ${viewerPeerId}`);
+    peerInfo.connection.addStream(screenStream);
+    console.log(`Screen stream added for ${viewerPeerId}`);
   } catch (err) {
     console.error(`Error adding screen to viewer ${viewerPeerId}:`, err);
   }
@@ -1466,17 +1483,10 @@ function removeScreenFromViewer(viewerPeerId: string) {
     return;
   }
   
-  // Remove only the video tracks from the peer connection
-  // Leave audio tracks alone
+  // Remove the screen stream from the peer connection
   try {
-    screenStream.getVideoTracks().forEach(track => {
-      const sender = peerInfo.connection['_pc']?.getSenders()?.find((s: RTCRtpSender) => s.track === track);
-      if (sender) {
-        peerInfo.connection.removeTrack(sender);
-        console.log(`Removed video track from ${viewerPeerId}`);
-      }
-    });
-    console.log(`Screen video removed for ${viewerPeerId}, back to audio only`);
+    peerInfo.connection.removeStream(screenStream);
+    console.log(`Screen stream removed for ${viewerPeerId}`);
   } catch (err) {
     console.error(`Error removing screen from viewer ${viewerPeerId}:`, err);
   }
@@ -1490,7 +1500,7 @@ async function handleAudioDeviceChange() {
     return;
   }
 
-  const deviceId = audioDeviceSelect.value;
+  const deviceId = audioInputDeviceSelect.value;
   
   try {
     console.log('[App] Switching audio device:', deviceId || 'default');
@@ -1501,11 +1511,114 @@ async function handleAudioDeviceChange() {
     // Update the mesh connection with the new stream
     meshConnection.updateStream(newStream);
     
+    // Restart local voice activity detection
+    setupLocalVoiceActivity();
+    
     console.log('[App] Audio device switched successfully');
   } catch (err) {
     console.error('[App] Error switching audio device:', err);
     updateStatus('connected', `Error switching audio device: ${(err as Error).message}`);
   }
+}
+
+/**
+ * Handle audio output device change
+ */
+async function handleAudioOutputDeviceChange() {
+  const deviceId = audioOutputDeviceSelect.value;
+  
+  try {
+    console.log('[App] Switching audio output device:', deviceId || 'default');
+    
+    if (audioManager) {
+      await audioManager.setOutputDevice(deviceId || '');
+    }
+    
+    console.log('[App] Audio output device switched successfully');
+  } catch (err) {
+    console.error('[App] Error switching audio output device:', err);
+  }
+}
+
+let localVoiceActivityInterval: number | null = null;
+let localVoiceAudioContext: AudioContext | null = null;
+
+/**
+ * Setup local voice activity detection
+ */
+function setupLocalVoiceActivity() {
+  // Clean up existing resources
+  cleanupLocalVoiceActivity();
+
+  if (!audioManager || !connected) {
+    return;
+  }
+
+  // Get the local audio stream
+  const stream = audioManager.getLocalStream();
+  if (!stream) return;
+
+  try {
+    localVoiceAudioContext = new AudioContext();
+    const analyser = localVoiceAudioContext.createAnalyser();
+    analyser.fftSize = 256;
+    const source = localVoiceAudioContext.createMediaStreamSource(stream);
+    source.connect(analyser);
+
+    const bufferLength = analyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+
+    // Check voice activity every 100ms
+    localVoiceActivityInterval = window.setInterval(() => {
+      if (isMuted || isDeafened) {
+        // Hide indicator when muted/deafened
+        if (speakingIndicator.style.display !== 'none') {
+          speakingIndicator.style.display = 'none';
+          userAvatar.classList.remove('speaking');
+        }
+        return;
+      }
+
+      analyser.getByteFrequencyData(dataArray);
+      
+      // Calculate average volume
+      let sum = 0;
+      for (let i = 0; i < bufferLength; i++) {
+        sum += dataArray[i];
+      }
+      const average = sum / bufferLength;
+      
+      // Threshold for detecting speech
+      const threshold = 20;
+      const isSpeaking = average > threshold;
+      
+      if (isSpeaking) {
+        speakingIndicator.style.display = 'block';
+        userAvatar.classList.add('speaking');
+      } else {
+        speakingIndicator.style.display = 'none';
+        userAvatar.classList.remove('speaking');
+      }
+    }, 100);
+  } catch (err) {
+    console.error('[App] Error setting up voice activity detection:', err);
+  }
+}
+
+/**
+ * Clean up local voice activity detection
+ */
+function cleanupLocalVoiceActivity() {
+  if (localVoiceActivityInterval) {
+    clearInterval(localVoiceActivityInterval);
+    localVoiceActivityInterval = null;
+  }
+  if (localVoiceAudioContext && localVoiceAudioContext.state !== 'closed') {
+    localVoiceAudioContext.close().catch(() => {});
+    localVoiceAudioContext = null;
+  }
+  speakingIndicator.style.display = 'none';
+  userAvatar.classList.remove('speaking');
 }
 
 /**
@@ -1709,7 +1822,8 @@ noiseSuppressionToggle.addEventListener('change', updateAudioSettings);
 autoGainControlToggle.addEventListener('change', updateAudioSettings);
 
 // Audio device change listener
-audioDeviceSelect.addEventListener('change', handleAudioDeviceChange);
+audioInputDeviceSelect.addEventListener('change', handleAudioDeviceChange);
+audioOutputDeviceSelect.addEventListener('change', handleAudioOutputDeviceChange);
 
 // Settings panel toggle
 const settingsToggle = document.getElementById('settings-toggle') as HTMLDivElement;
