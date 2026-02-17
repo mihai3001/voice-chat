@@ -1182,16 +1182,11 @@
       transition: all 0.3s ease;
     }
     
-    /* Fullscreen mode overlay */
-    .remote-screen-item.fullscreen-active {
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      width: 100vw !important;
-      height: 100vh !important;
-      z-index: 9999;
+    /* Fullscreen mode - uses native Fullscreen API */
+    .remote-screen-item.fullscreen-active,
+    .remote-screen-item:fullscreen {
+      width: 100% !important;
+      height: 100% !important;
       background: #000;
       border-radius: 0;
       padding: 0;
@@ -1203,34 +1198,45 @@
       overflow: hidden;
     }
     
+    .remote-screen-item:fullscreen .screen-header,
     .remote-screen-item.fullscreen-active .screen-header {
       position: absolute;
       top: 1rem;
       right: 1rem;
       z-index: 10001;
-      background: rgba(0, 0, 0, 0.8);
+      background: rgba(0, 0, 0, 0.7);
       padding: 0.5rem 1rem;
       border-radius: 8px;
       backdrop-filter: blur(10px);
       margin: 0;
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+
+    .remote-screen-item:fullscreen:hover .screen-header,
+    .remote-screen-item.fullscreen-active:hover .screen-header {
+      opacity: 1;
     }
     
+    .remote-screen-item:fullscreen .screen-header span,
     .remote-screen-item.fullscreen-active .screen-header span {
       color: white;
       font-weight: 600;
     }
     
+    .remote-screen-item:fullscreen video,
     .remote-screen-item.fullscreen-active video {
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100vw !important;
-      height: 100vh !important;
-      max-width: 100vw !important;
-      max-height: 100vh !important;
+      width: 100% !important;
+      height: 100% !important;
+      max-width: 100% !important;
+      max-height: 100% !important;
       object-fit: contain;
       background: #000;
       border-radius: 0;
+    }
+
+    .remote-screen-item::backdrop {
+      background: #000;
     }
     
     .remote-screen-item .screen-header {

@@ -1317,6 +1317,9 @@ function handleRemoteScreen(peerId: string, stream: MediaStream) {
     
     const exitFullscreen = () => {
       console.log('Exiting fullscreen mode');
+      if (document.fullscreenElement) {
+        document.exitFullscreen().catch(() => {});
+      }
       screenItem!.classList.remove('fullscreen-active');
       fullscreenBtn.style.display = 'block';
       fullscreenCloseBtn.style.display = 'none';
@@ -1327,24 +1330,26 @@ function handleRemoteScreen(peerId: string, stream: MediaStream) {
       screenItem!.classList.add('fullscreen-active');
       fullscreenBtn.style.display = 'none';
       fullscreenCloseBtn.style.display = 'block';
+      // Use native Fullscreen API for true fullscreen
+      screenItem!.requestFullscreen().catch((err: Error) => {
+        console.warn('Could not enter fullscreen:', err);
+      });
     };
     
     fullscreenBtn.addEventListener('click', () => {
-      console.log('Fullscreen button clicked!');
       enterFullscreen();
     });
     
     fullscreenCloseBtn.addEventListener('click', () => {
-      console.log('Close fullscreen button clicked!');
       exitFullscreen();
     });
     
-    // Allow ESC key to exit fullscreen (and prevent disconnect)
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && screenItem!.classList.contains('fullscreen-active')) {
-        e.preventDefault();
-        e.stopPropagation();
-        exitFullscreen();
+    // Listen for native fullscreen exit (ESC key handled by browser)
+    document.addEventListener('fullscreenchange', () => {
+      if (!document.fullscreenElement && screenItem!.classList.contains('fullscreen-active')) {
+        screenItem!.classList.remove('fullscreen-active');
+        fullscreenBtn.style.display = 'block';
+        fullscreenCloseBtn.style.display = 'none';
       }
     });
   }
