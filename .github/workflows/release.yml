@@ -32,42 +32,19 @@ jobs:
         with:
           version: 10
       
-      - name: Check pnpm version
-        run: pnpm --version
-      
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      
-      - name: List installed packages
-        run: pnpm list --depth 0
       
       - name: Build all packages
         run: pnpm -r build
       
-      - name: Check build output
-        run: |
-          echo "Checking desktop-app dist folder..."
-          dir packages\desktop-app\dist /s
-        shell: cmd
-      
-      - name: Create GitHub Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref_name }}
-          release_name: VoiceLink ${{ github.ref_name }}
-          draft: false
-          prerelease: false
-      
-      - name: Package desktop app
+      - name: Package and publish desktop app
         working-directory: packages/desktop-app
         run: |
-          echo "Starting electron-builder..."
           pnpm build
-          pnpm exec electron-builder --publish never
+          pnpm exec electron-builder --publish always
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: false
           ELECTRON_BUILDER_ALLOW_UNRESOLVED_DEPENDENCIES: true
 
@@ -81,38 +58,3 @@ jobs:
             echo "Release folder does not exist!"
           }
         shell: pwsh
-
-      - name: Get version from tag
-        id: version
-        run: echo "VERSION=${{ github.ref_name }}" | sed 's/^VERSION=v/VERSION=/' >> $GITHUB_ENV
-        shell: bash
-      
-      - name: Upload Windows NSIS Installer
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: packages/desktop-app/release/VoiceLink Setup ${{ env.VERSION }}.exe
-          asset_name: VoiceLink-Setup-${{ github.ref_name }}.exe
-          asset_content_type: application/octet-stream
-      
-      - name: Upload Windows Portable
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: packages/desktop-app/release/VoiceLink ${{ env.VERSION }}.exe
-          asset_name: VoiceLink-Portable-${{ github.ref_name }}.exe
-          asset_content_type: application/octet-stream
-      
-      - name: Upload latest.yml
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: packages/desktop-app/release/latest.yml
-          asset_name: latest.yml
-          asset_content_type: text/yaml
