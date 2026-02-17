@@ -13,6 +13,11 @@ let mainWindow: BrowserWindow | null = null;
 autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = true;
 
+// Log the feed URL for debugging
+console.log('Auto-updater configuration:');
+console.log('  App version:', app.getVersion());
+console.log('  Feed URL:', (autoUpdater as any).getFeedURL?.() || 'Not yet set');
+
 // Auto-updater event handlers
 autoUpdater.on('checking-for-update', () => {
   console.log('Checking for updates...');
@@ -31,6 +36,11 @@ autoUpdater.on('update-not-available', (info) => {
 
 autoUpdater.on('error', (err) => {
   console.error('Update error:', err);
+  console.error('Error details:', {
+    message: err.message,
+    stack: err.stack,
+    feedURL: (autoUpdater as any).getFeedURL?.() || 'Unknown'
+  });
   sendUpdateStatus('update-error', { message: err.message });
 });
 
