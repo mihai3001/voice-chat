@@ -216,8 +216,16 @@ export class MeshConnection {
         peerInfo = this.createPeerConnection(fromPeerId, false, username);
       }
       
-      // Handle the signal
-      peerInfo.connection.signal(signal);
+      // Guard: Only signal if peer connection exists and is not destroyed
+      if (peerInfo && peerInfo.connection && !peerInfo.connection.destroyed) {
+        try {
+          peerInfo.connection.signal(signal);
+        } catch (err) {
+          console.error(`[MeshConnection] Error signaling to ${fromPeerId}:`, err);
+        }
+      } else {
+        console.warn(`[MeshConnection] Ignoring signal from ${fromPeerId} - peer is destroyed or missing`);
+      }
     });
   }
   

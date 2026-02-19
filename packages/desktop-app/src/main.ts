@@ -8,15 +8,29 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 let mainWindow: BrowserWindow | null = null;
+let pendingRoomLink: string | null = null; // Store room link if app not ready
 
 // Configure auto-updater
 autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = true;
 
+// Enable verbose logging for auto-updater
+(autoUpdater as any).logger = {
+  info: (...args: any[]) => console.log('[AUTO-UPDATE INFO]', ...args),
+  warn: (...args: any[]) => console.warn('[AUTO-UPDATE WARN]', ...args),
+  error: (...args: any[]) => console.error('[AUTO-UPDATE ERROR]', ...args),
+  debug: (...args: any[]) => console.log('[AUTO-UPDATE DEBUG]', ...args)
+};
+
 // Log the feed URL for debugging
 console.log('Auto-updater configuration:');
 console.log('  App version:', app.getVersion());
 console.log('  Feed URL:', (autoUpdater as any).getFeedURL?.() || 'Not yet set');
+console.log('  Publish config:', {
+  provider: 'github',
+  owner: 'mihai3001',
+  repo: 'voice-chat'
+});
 
 // Auto-updater event handlers
 autoUpdater.on('checking-for-update', () => {
@@ -68,7 +82,7 @@ function createWindow() {
       nodeIntegration: true,
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.cjs'),
-      devTools: false // Disable developer console
+      devTools: true // Enable developer console
     },
     title: '🎙️ VoiceLink',
     autoHideMenuBar: true, // Hide menu bar (File/Edit/etc)
@@ -84,10 +98,8 @@ function createWindow() {
   
   mainWindow.loadFile(rendererPath);
 
-  // Open DevTools only in development mode
-  if (!app.isPackaged) {
-    mainWindow.webContents.openDevTools();
-  }
+  // Open DevTools automatically
+  mainWindow.webContents.openDevTools();
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -103,9 +115,80 @@ function createWindow() {
   });
 }
 
+// Protocol handler for deep links (voicelink://room/ROOM_ID)
+if (process.defaultApp) {
+  // Development mode - register protocol
+  if (process.argv.length >= 2) {
+    app.setAsDefaultProtocolClient('voicelink', process.execPath, [path.resolve(process.argv[1])]);
+  }
+} else {
+  // Production mode
+  app.setAsDefaultProtocolClient('voicelink');
+}
+
+// Handle protocol URLs (Windows/Linux)
+const gotTheLock = app.requestSingleInstanceLock();
+
+if (!gotTheLock) {
+  app.quit();
+} else {
+  app.on('second-instance', (event, commandLine, workingDirectory) => {
+    // Someone tried to run a second instance, focus our window instead
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+      
+      // Handle room link from second instance
+      const url = commandLine.find(arg => arg.startsWith('voicelink://'));
+      if (url) {
+        handleRoomLink(url);
+      }
+    }
+  });
+}
+
+// Handle protocol URLs (macOS)
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  handleRoomLink(url);
+});
+
+function handleRoomLink(url: string) {
+  console.log('Received room link:', url);
+  
+  // Parse voicelink://room/ROOM_ID or voicelink://ROOM_ID
+  const match = url.match(/voicelink:\/\/(?:room\/)?([A-Za-z0-9_-]+)/);
+  if (match && match[1]) {
+    const roomId = match[1];
+    console.log('Parsed room ID:', roomId);
+    
+    if (mainWindow && mainWindow.webContents) {
+      // Send room ID to renderer
+      mainWindow.webContents.send('join-room-from-link', roomId);
+    } else {
+      // Store for later if window not ready
+      pendingRoomLink = roomId;
+    }
+  }
+}
+
 // App ready
 app.whenReady().then(() => {
   createWindow();
+  
+  // Handle pending room link
+  if (pendingRoomLink && mainWindow) {
+    setTimeout(() => {
+      mainWindow!.webContents.send('join-room-from-link', pendingRoomLink);
+      pendingRoomLink = null;
+    }, 1000); // Wait for renderer to be ready
+  }
+  
+  // Handle command line arguments (Windows/Linux)
+  const url = process.argv.find(arg => arg.startsWith('voicelink://'));
+  if (url) {
+    handleRoomLink(url);
+  }
 
   // Check for updates after a short delay (only in production)
   if (app.isPackaged) {

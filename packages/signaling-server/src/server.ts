@@ -215,6 +215,27 @@ io.on('connection', (socket) => {
     io.to(targetPeer.socketId).emit('stop-request-screen', { requesterPeerId });
   });
 
+  socket.on('screen-ready', (data: { roomId: string; viewerPeerId: string; sharerPeerId: string }) => {
+    const { roomId, viewerPeerId, sharerPeerId } = data;
+    
+    console.log(`[${new Date().toISOString()}] Screen ready from ${sharerPeerId} for viewer ${viewerPeerId}`);
+    
+    const room = rooms.get(roomId);
+    if (!room) {
+      console.error(`Room ${roomId} not found`);
+      return;
+    }
+    
+    const viewerPeer = room.peers.get(viewerPeerId);
+    if (!viewerPeer) {
+      console.error(`Viewer peer ${viewerPeerId} not found in room ${roomId}`);
+      return;
+    }
+    
+    // Forward screen-ready notification to viewer
+    io.to(viewerPeer.socketId).emit('screen-ready', { sharerPeerId });
+  });
+
   // Handle peer disconnect
   socket.on('disconnect', () => {
     console.log(`[${new Date().toISOString()}] Client disconnected: ${socket.id}`);

@@ -10,11 +10,10 @@ let meshConnection: MeshConnection | null = null;
 let audioManager: AudioManager | null = null;
 let chatManager: ChatManager | null = null;
 let connected = false;
-let pushToTalkEnabled = false;
-let pushToTalkActive = false;
 let currentRoomId: string | null = null;
 let isMuted = false;
 let isDeafened = false;
+let inputMonitoringNode: GainNode | null = null;
 
 // Screen sharing state
 let screenStream: MediaStream | null = null;
@@ -22,6 +21,7 @@ let isScreenSharing = false;
 const remoteScreens = new Map<string, MediaStream>();
 const remoteScreenAvailable = new Map<string, boolean>(); // Track who's sharing (but not necessarily streaming to us)
 const screenViewers = new Set<string>(); // Track who's viewing our screen
+const screenTracksAdded = new Set<string>(); // Track which peers have screen tracks added to their connection
 let screenQuality: '720p15' | '720p30' | '720p60' | '1080p30' | '1080p60' | '1080p144' | '1440p60' | '1440p144' | '4k60' = '1080p30';
 
 // Quality presets for screen sharing (keys match dropdown values)
@@ -145,12 +145,43 @@ function playNotificationSound(type: 'message' | 'join' | 'leave' | 'mute') {
 const peerConnectionQuality = new Map<string, number>();
 let connectionQualityInterval: NodeJS.Timeout | null = null;
 
+// Detailed connection stats per peer
+interface PeerStats {
+  rtt: number;          // Round trip time in ms
+  packetLoss: number;   // Packet loss rate (0-1)
+  bitrate: number;      // Current bitrate in kbps
+}
+const peerDetailedStats = new Map<string, PeerStats>();
+
+// Bandwidth tracking
+let totalBytesSent = 0;
+let totalBytesReceived = 0;
+let lastBandwidthCheck = 0;
+let currentUploadBandwidth = 0;   // kbps
+let currentDownloadBandwidth = 0; // kbps
+
 // Audio health check
 let audioHealthCheckInterval: NodeJS.Timeout | null = null;
 let isReconnectingAudio = false;
 
+// Auto-reconnect state
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 5;
+const RECONNECT_DELAY_MS = 3000; // 3 seconds
+const RECONNECT_STATUS_DELAY_MS = 3000; // Only show reconnecting status after 3 seconds
+let reconnectTimeout: NodeJS.Timeout | null = null;
+let reconnectingStatusTimeout: NodeJS.Timeout | null = null;
+let isReconnecting = false;
+let reconnectData: { signalingUrl: string; roomId: string; username: string } | null = null;
+
+// Spatial audio state
+let spatialAudioEnabled = false;
+let spatialAudioContext: AudioContext | null = null;
+const spatialPanners = new Map<string, { panner: PannerNode; source: MediaStreamAudioSourceNode; gain: GainNode }>();
+
 // Generate a unique peer ID
-const peerId = `peer_${Math.random().toString(36).substr(2, 9)}`;
+const peerId = `peer_${Math.random().toString(36).substr(2, 9)}_${Date.now()}`;
+console.log('[APP] Generated peer ID:', peerId);
 
 // Generate a random username for easy testing
 const randomNames = ['Alice', 'Bob', 'Charlie', 'Diana', 'Eve', 'Frank', 'Grace', 'Henry', 'Iris', 'Jack'];
@@ -164,10 +195,9 @@ const audioInputDeviceSelect = document.getElementById('audio-input-device') as 
 const audioOutputDeviceSelect = document.getElementById('audio-output-device') as HTMLSelectElement;
 const connectBtn = document.getElementById('connect-btn') as HTMLButtonElement;
 const disconnectBtn = document.getElementById('disconnect-btn') as HTMLButtonElement;
+const copyLinkBtn = document.getElementById('copy-link-btn') as HTMLButtonElement;
 const muteBtn = document.getElementById('mute-btn') as HTMLButtonElement;
 const deafenBtn = document.getElementById('deafen-btn') as HTMLButtonElement;
-const pttToggleBtn = document.getElementById('ptt-toggle-btn') as HTMLButtonElement;
-const pttIndicator = document.getElementById('ptt-indicator') as HTMLDivElement;
 const statusDiv = document.getElementById('status') as HTMLDivElement;
 const statusMessage = document.getElementById('status-message') as HTMLSpanElement;
 const peersList = document.getElementById('peers-list') as HTMLDivElement;
@@ -178,6 +208,14 @@ const peerCount = document.getElementById('peer-count') as HTMLSpanElement;
 const echoCancellationToggle = document.getElementById('echo-cancellation') as HTMLInputElement;
 const noiseSuppressionToggle = document.getElementById('noise-suppression') as HTMLInputElement;
 const autoGainControlToggle = document.getElementById('auto-gain-control') as HTMLInputElement;
+const inputMonitoringToggle = document.getElementById('input-monitoring') as HTMLInputElement;
+const voiceSensitivitySlider = document.getElementById('voice-sensitivity') as HTMLInputElement;
+const voiceSensitivityValue = document.getElementById('voice-sensitivity-value') as HTMLSpanElement;
+const spatialAudioToggle = document.getElementById('spatial-audio') as HTMLInputElement;
+const colorSchemeSelect = document.getElementById('color-scheme') as HTMLSelectElement;
+const smoothTransitionsToggle = document.getElementById('smooth-transitions') as HTMLInputElement;
+const animatedWaveformsToggle = document.getElementById('animated-waveforms') as HTMLInputElement;
+const fadeEffectsToggle = document.getElementById('fade-effects') as HTMLInputElement;
 const userAvatar = document.getElementById('user-avatar') as HTMLDivElement;
 const speakingIndicator = document.getElementById('speaking-indicator') as HTMLSpanElement;
 
@@ -189,6 +227,13 @@ const localScreenVideo = document.getElementById('local-screen') as HTMLVideoEle
 const remoteScreensContainer = document.getElementById('remote-screens-container') as HTMLDivElement;
 const remoteScreensDiv = document.getElementById('remote-screens') as HTMLDivElement;
 const screenQualitySelect = document.getElementById('screen-quality') as HTMLSelectElement;
+const screenSharingList = document.getElementById('screen-sharing-list') as HTMLDivElement;
+const screenSharers = document.getElementById('screen-sharers') as HTMLDivElement;
+
+// Bandwidth stats elements
+const bandwidthStats = document.getElementById('bandwidth-stats') as HTMLDivElement;
+const uploadBandwidth = document.getElementById('upload-bandwidth') as HTMLSpanElement;
+const downloadBandwidth = document.getElementById('download-bandwidth') as HTMLSpanElement;
 
 // Update banner elements
 const updateBanner = document.getElementById('update-banner') as HTMLDivElement;
@@ -203,9 +248,10 @@ const updateProgress = document.getElementById('update-progress') as HTMLDivElem
 const chatMessages = document.getElementById('chat-messages') as HTMLDivElement;
 const chatInput = document.getElementById('chat-input') as HTMLInputElement;
 const chatSendBtn = document.getElementById('chat-send-btn') as HTMLButtonElement;
-const chatImageBtn = document.getElementById('chat-image-btn') as HTMLButtonElement;
-const chatImageInput = document.getElementById('chat-image-input') as HTMLInputElement;
 const chatEmptyState = document.getElementById('chat-empty-state') as HTMLDivElement;
+
+// Chat state
+let attachedImage: File | null = null;
 
 // View elements
 const disconnectedView = document.getElementById('disconnected-view') as HTMLDivElement;
@@ -214,6 +260,8 @@ const rightSidebar = document.getElementById('right-sidebar') as HTMLDivElement;
 const leftSidebar = document.getElementById('left-sidebar') as HTMLDivElement;
 const mainContent = document.getElementById('main-content') as HTMLDivElement;
 const centeredConnection = document.getElementById('centered-connection') as HTMLDivElement;
+const leftResizeHandle = document.getElementById('left-resize-handle') as HTMLDivElement;
+const rightResizeHandle = document.getElementById('right-resize-handle') as HTMLDivElement;
 
 // User info elements
 const currentUsername = document.getElementById('current-username') as HTMLDivElement;
@@ -224,6 +272,12 @@ const settingsModal = document.getElementById('settings-modal') as HTMLDivElemen
 const settingsBtn = document.getElementById('settings-btn') as HTMLButtonElement;
 const settingsBtnMain = document.getElementById('settings-btn-main') as HTMLButtonElement;
 const settingsCloseBtn = document.getElementById('settings-close-btn') as HTMLButtonElement;
+const fabSettings = document.getElementById('fab-settings') as HTMLButtonElement;
+
+// Connect page elements
+const toggleAdvancedBtn = document.getElementById('toggle-advanced-btn') as HTMLButtonElement;
+const advancedSection = document.getElementById('advanced-section') as HTMLDivElement;
+const recentRoomsList = document.getElementById('recent-rooms-list') as HTMLDivElement;
 // Theme toggle removed - always dark mode
 
 /**
@@ -241,19 +295,18 @@ declare global {
   }
 }
 
-// Theme management (dark mode only)
+// Theme management (deprecated - now using color scheme system)
 function applyTheme(): void {
-  // Always use dark theme
-  document.documentElement.setAttribute('data-theme', 'dark');
+  // No-op: Color scheme is now handled by changeColorScheme() and saved settings
 }
 
 function toggleTheme(): void {
-  // Theme toggle disabled - always dark mode
+  // No-op: Theme toggle disabled
 }
 
-// Initialize theme on load
+// Initialize theme on load (deprecated)
 function initTheme(): void {
-  applyTheme();
+  // No-op: Color scheme is applied when loading saved settings
 }
 
 // Settings persistence
@@ -263,7 +316,10 @@ interface Settings {
   echoCancellation: boolean;
   noiseSuppression: boolean;
   autoGainControl: boolean;
-  pushToTalkEnabled: boolean;
+  voiceSensitivity: number;
+  inputMonitoring: boolean;
+  spatialAudio: boolean;
+  colorScheme: string;
 }
 
 function loadSettings(): Settings {
@@ -273,7 +329,10 @@ function loadSettings(): Settings {
     echoCancellation: true,
     noiseSuppression: true,
     autoGainControl: true,
-    pushToTalkEnabled: false
+    voiceSensitivity: -45,
+    inputMonitoring: false,
+    spatialAudio: false,
+    colorScheme: 'default'
   };
   
   try {
@@ -300,8 +359,99 @@ function getCurrentSettings(): Settings {
     echoCancellation: echoCancellationToggle.checked,
     noiseSuppression: noiseSuppressionToggle.checked,
     autoGainControl: autoGainControlToggle.checked,
-    pushToTalkEnabled
+    voiceSensitivity: parseInt(voiceSensitivitySlider.value),
+    inputMonitoring: inputMonitoringToggle.checked,
+    spatialAudio: spatialAudioToggle.checked,
+    colorScheme: colorSchemeSelect.value
   };
+}
+
+/**
+ * Save a room to recent rooms list
+ */
+function saveRecentRoom(roomId: string): void {
+  try {
+    const recentRooms = JSON.parse(localStorage.getItem('recentRooms') || '[]');
+    const room = {
+      id: roomId,
+      timestamp: Date.now()
+    };
+    
+    // Remove existing entry if present
+    const filtered = recentRooms.filter((r: any) => r.id !== roomId);
+    
+    // Add to beginning and limit to 5 rooms
+    filtered.unshift(room);
+    const limited = filtered.slice(0, 5);
+    
+    localStorage.setItem('recentRooms', JSON.stringify(limited));
+  } catch (err) {
+    console.error('Error saving recent room:', err);
+  }
+}
+
+/**
+ * Load recent rooms from localStorage
+ */
+function loadRecentRooms(): void {
+  try {
+    const recentRoomsContainer = document.getElementById('recent-rooms-container');
+    if (!recentRoomsContainer) return;
+    
+    const recentRooms = JSON.parse(localStorage.getItem('recentRooms') || '[]');
+    
+    if (recentRooms.length === 0) {
+      recentRoomsContainer.innerHTML = '<p style="text-align: center; color: var(--text-secondary); padding: 2rem;">No recent rooms yet</p>';
+      return;
+    }
+    
+    recentRoomsContainer.innerHTML = recentRooms.map((room: any) => {
+      const timeAgo = getTimeAgo(room.timestamp);
+      
+      return `
+        <div class="recent-room-card" data-room-id="${room.id}">
+          <div class="recent-room-header">
+            <div class="recent-room-icon">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                <circle cx="9" cy="7" r="4"></circle>
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+              </svg>
+            </div>
+            <div class="recent-room-info">
+              <div class="recent-room-name">${room.id}</div>
+              <div class="recent-room-time">Last joined ${timeAgo}</div>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+    
+    // Add click handlers
+    document.querySelectorAll('.recent-room-card').forEach(card => {
+      card.addEventListener('click', () => {
+        const roomId = card.getAttribute('data-room-id');
+        if (roomId && roomIdInput) {
+          roomIdInput.value = roomId;
+        }
+      });
+    });
+  } catch (err) {
+    console.error('Error loading recent rooms:', err);
+  }
+}
+
+/**
+ * Get human-readable time ago
+ */
+function getTimeAgo(timestamp: number): string {
+  const seconds = Math.floor((Date.now() - timestamp) / 1000);
+  
+  if (seconds < 60) return 'Just now';
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  return `${Math.floor(seconds / 86400)}d ago`;
 }
 
 /**
@@ -313,7 +463,8 @@ async function initAudioManager() {
   audioManager = new AudioManager({
     echoCancellation: settings.echoCancellation,
     noiseSuppression: settings.noiseSuppression,
-    autoGainControl: settings.autoGainControl
+    autoGainControl: settings.autoGainControl,
+    noiseGateThreshold: settings.voiceSensitivity
   });
 
   // Load audio devices
@@ -329,6 +480,7 @@ async function initAudioManager() {
   // Set up voice activity detection
   audioManager.onVoiceActivity((peerId, isSpeaking) => {
     peerSpeakingState.set(peerId, isSpeaking);
+    updateWaveform(peerId, isSpeaking);
     updatePeersList();
   });
 }
@@ -364,7 +516,16 @@ function updateAudioDeviceList(devices: any[]) {
  */
 function updateStatus(status: 'disconnected' | 'connecting' | 'connected', message: string) {
   statusDiv.className = `status status-${status}`;
-  statusMessage.textContent = message;
+  
+  // Add spinner for connecting status
+  if (status === 'connecting') {
+    const spinner = createSpinner(false);
+    statusMessage.innerHTML = '';
+    statusMessage.appendChild(spinner);
+    statusMessage.appendChild(document.createTextNode(' ' + message));
+  } else {
+    statusMessage.textContent = message;
+  }
   
   // Update user status
   if (status === 'connected') {
@@ -373,6 +534,38 @@ function updateStatus(status: 'disconnected' | 'connecting' | 'connected', messa
     userStatus.textContent = 'Connecting...';
   } else {
     userStatus.textContent = 'Offline';
+  }
+}
+
+/**
+ * Show reconnecting status with delay to prevent flickering
+ */
+function showReconnectingStatus(message: string, immediate: boolean = false) {
+  // Clear any pending status update
+  if (reconnectingStatusTimeout) {
+    clearTimeout(reconnectingStatusTimeout);
+    reconnectingStatusTimeout = null;
+  }
+  
+  if (immediate) {
+    // Show immediately (e.g., for manual reconnect or after first few attempts)
+    updateStatus('connecting', message);
+  } else {
+    // Delay showing the status - only show if reconnection takes > 3 seconds
+    reconnectingStatusTimeout = setTimeout(() => {
+      updateStatus('connecting', message);
+      reconnectingStatusTimeout = null;
+    }, RECONNECT_STATUS_DELAY_MS);
+  }
+}
+
+/**
+ * Clear reconnecting status timeout
+ */
+function clearReconnectingStatus() {
+  if (reconnectingStatusTimeout) {
+    clearTimeout(reconnectingStatusTimeout);
+    reconnectingStatusTimeout = null;
   }
 }
 
@@ -420,45 +613,136 @@ function updatePeersList() {
     // Get connection quality (0-4 bars)
     const quality = peerConnectionQuality.get(peer.peerId) || 0;
     const qualityClass = quality === 4 ? 'excellent' : quality === 3 ? 'good' : quality === 2 ? 'fair' : 'poor';
+    
+    // Get detailed stats for tooltip
+    const detailedStats = peerDetailedStats.get(peer.peerId);
+    let tooltipText = `Connection quality: ${qualityClass}`;
+    if (detailedStats) {
+      tooltipText = `Ping: ${detailedStats.rtt.toFixed(0)}ms | Loss: ${(detailedStats.packetLoss * 100).toFixed(1)}% | Bitrate: ${detailedStats.bitrate}kbps`;
+    }
+    
     const qualityBars = `
-      <div class="connection-quality ${qualityClass}" title="Connection quality: ${qualityClass}">
+      <div class="connection-quality ${qualityClass}" title="${tooltipText}">
         <div class="connection-bar ${quality >= 1 ? 'active' : ''}"></div>
         <div class="connection-bar ${quality >= 2 ? 'active' : ''}"></div>
         <div class="connection-bar ${quality >= 3 ? 'active' : ''}"></div>
         <div class="connection-bar ${quality >= 4 ? 'active' : ''}"></div>
       </div>
     `;
+
+    // Waveform for speaking indicator
+    const waveformId = `waveform-${peer.peerId}`;
+    const waveformHTML = `
+      <div id="${waveformId}" class="waveform-container" style="display: ${isSpeaking ? 'flex' : 'none'};">
+        <div class="waveform-bar ${isSpeaking ? 'active' : ''}"></div>
+        <div class="waveform-bar ${isSpeaking ? 'active' : ''}"></div>
+        <div class="waveform-bar ${isSpeaking ? 'active' : ''}"></div>
+        <div class="waveform-bar ${isSpeaking ? 'active' : ''}"></div>
+        <div class="waveform-bar ${isSpeaking ? 'active' : ''}"></div>
+      </div>
+    `;
     
     return `
-      <div class="peer-item ${peer.connected ? 'connected' : ''} ${isHost ? 'host' : ''}">
+      <div class="peer-item ${peer.connected ? 'connected' : ''} ${isHost ? 'host' : ''} ${isSpeaking ? 'speaking' : ''}">
         <div class="peer-header">
           <div class="peer-info">
-            <div class="peer-indicator ${peer.connected ? (isSpeaking ? 'speaking' : 'connected') : ''}"></div>
-            <span><strong>${peer.username || peer.peerId}</strong></span>
-            ${isHost ? '<span class="host-badge">HOST</span>' : ''}
-            ${isSpeaking ? '<span style="font-size: 12px;">🎤</span>' : ''}
-          </div>
-          <div class="peer-status-line">
-            <span style="font-size: 11px; color: var(--text-tertiary);">
-              ${peer.connected ? `${connectionLabel ? connectionIcon + ' ' + connectionLabel : '🔊 Connected'}` : '⏳ Connecting...'}
-            </span>
+            <div class="peer-avatar ${isSpeaking ? 'speaking' : ''}" style="background: ${getAvatarColor(peer.username || peer.peerId)}">
+              ${getInitials(peer.username || peer.peerId)}
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 0.25rem; flex: 1;">
+              <div style="display: flex; align-items: center; gap: 0.5rem;">
+                <div class="peer-indicator ${peer.connected ? (isSpeaking ? 'speaking' : 'connected') : ''}"></div>
+                <span><strong>${peer.username || peer.peerId}</strong></span>
+                ${isHost ? '<span class="host-badge">HOST</span>' : ''}
+              </div>
+              <span style="font-size: 11px; color: var(--text-tertiary);">
+                ${peer.connected ? `${connectionLabel ? connectionIcon + ' ' + connectionLabel : '🔊 Connected'}` : '⏳ Connecting...'}
+              </span>
+            </div>
             ${peer.connected ? qualityBars : ''}
           </div>
-        </div>
-        <div class="peer-actions">
-          <button class="${screenBtnClass}" data-peer-id="${peer.peerId}" ${!isSharing ? 'disabled' : ''}>
-            ${screenBtnText}
-          </button>
+          ${waveformHTML}
         </div>
       </div>
     `;
   }).join('');
   
-  // Add event listeners to screen buttons
-  const screenButtons = peersList.querySelectorAll('button[data-peer-id]');
-  screenButtons.forEach(btn => {
+  // Remove old screen button event listeners (no longer needed)
+  // Now we'll populate the screen sharing list instead
+  updateScreenSharingList();
+
+  // Register waveform updaters for each peer
+  peers.forEach(peer => {
+    const waveformId = `waveform-${peer.peerId}`;
+    const waveformElement = document.getElementById(waveformId);
+    if (waveformElement) {
+      addWaveformToPeer(peer.peerId, waveformElement);
+    }
+  });
+}
+
+/**
+ * Update screen sharing list in right sidebar
+ */
+function updateScreenSharingList() {
+  if (!meshConnection) return;
+
+  const peers = meshConnection.getPeers();
+  const sharingPeers = peers.filter(peer => remoteScreenAvailable.has(peer.peerId));
+
+  if (sharingPeers.length === 0) {
+    screenSharingList.style.display = 'none';
+    return;
+  }
+
+  screenSharingList.style.display = 'block';
+  
+  screenSharers.innerHTML = sharingPeers.map(peer => {
+    const isViewing = remoteScreens.has(peer.peerId);
+    const btnText = isViewing ? 'Viewing' : 'View';
+    const btnClass = isViewing ? 'viewing' : '';
+    
+    return `
+      <div class="screen-sharer-item" data-peer-id="${peer.peerId}">
+        <div class="screen-sharer-avatar" style="background: ${getAvatarColor(peer.username || peer.peerId)}">
+          ${getInitials(peer.username || peer.peerId)}
+        </div>
+        <div class="screen-sharer-info">
+          <div class="screen-sharer-name">${peer.username || peer.peerId}</div>
+          <div class="screen-sharer-status">
+            <span class="screen-live-indicator"></span>
+            Sharing screen
+          </div>
+        </div>
+        <button class="screen-view-btn ${btnClass}" data-peer-id="${peer.peerId}">
+          ${btnText}
+        </button>
+      </div>
+    `;
+  }).join('');
+
+  // Add click event listeners
+  const viewButtons = screenSharers.querySelectorAll('.screen-view-btn');
+  viewButtons.forEach(btn => {
     btn.addEventListener('click', (e) => {
+      e.stopPropagation();
       const peerId = (e.target as HTMLButtonElement).dataset.peerId!;
+      const isViewing = remoteScreens.has(peerId);
+      
+      if (isViewing) {
+        stopViewingScreen(peerId);
+      } else {
+        requestScreenShare(peerId);
+      }
+    });
+  });
+
+  // Also make the whole item clickable
+  const sharerItems = screenSharers.querySelectorAll('.screen-sharer-item');
+  sharerItems.forEach(item => {
+    item.addEventListener('click', (e) => {
+      if ((e.target as HTMLElement).classList.contains('screen-view-btn')) return;
+      const peerId = (item as HTMLElement).dataset.peerId!;
       const isViewing = remoteScreens.has(peerId);
       
       if (isViewing) {
@@ -516,7 +800,7 @@ async function reconnectAudio() {
   
   console.log('⚠️ Audio stream unhealthy, attempting reconnect...');
   isReconnectingAudio = true;
-  updateStatus('connecting', 'Reconnecting audio...');
+  showReconnectingStatus('Reconnecting audio...');
   
   try {
     const deviceId = audioInputDeviceSelect.value;
@@ -529,11 +813,14 @@ async function reconnectAudio() {
     if (meshConnection && newStream) {
       meshConnection.updateStream(newStream);
       console.log('✅ Audio reconnected successfully');
+      clearReconnectingStatus();
       updateStatus('connected', 'Connected');
     }
   } catch (err) {
     console.error('❌ Failed to reconnect audio:', err);
-    updateStatus('disconnected', 'Audio reconnection failed');
+    // Don't show disconnected - we're still connected to the room, just audio failed
+    clearReconnectingStatus();
+    updateStatus('connected', 'Connected (microphone error)');
   } finally {
     isReconnectingAudio = false;
   }
@@ -628,6 +915,9 @@ async function monitorPeerConnectionQuality(peerId: string) {
     let packetsLost = 0;
     let packetsReceived = 0;
     let jitter: number | undefined;
+    let bitrate = 0;
+    let bytesSent = 0;
+    let bytesReceived = 0;
 
     stats.forEach((report: any) => {
       if (report.type === 'candidate-pair' && report.state === 'succeeded') {
@@ -636,11 +926,37 @@ async function monitorPeerConnectionQuality(peerId: string) {
         packetsLost += report.packetsLost || 0;
         packetsReceived += report.packetsReceived || 0;
         jitter = report.jitter ? report.jitter * 1000 : undefined;
+        bytesReceived += report.bytesReceived || 0;
+        
+        // Calculate bitrate (convert bytes to kbps)
+        if (report.bytesReceived && report.timestamp) {
+          const previousStats = peerDetailedStats.get(peerId);
+          if (previousStats && previousStats.bitrate > 0) {
+            // Use stored timestamp to calculate rate
+            const timeDiff = 3; // seconds (our monitoring interval)
+            const bytesDiff = report.bytesReceived - bytesReceived;
+            bitrate = Math.round((bytesDiff * 8) / (timeDiff * 1000)); // kbps
+          }
+        }
+      } else if (report.type === 'outbound-rtp') {
+        bytesSent += report.bytesSent || 0;
       }
     });
 
+    // Update total bandwidth counters
+    totalBytesSent += bytesSent;
+    totalBytesReceived += bytesReceived;
+
     const quality = calculateConnectionQuality({ rtt, packetsLost, packetsReceived, jitter });
     peerConnectionQuality.set(peerId, quality);
+
+    // Store detailed stats
+    const packetLossRate = packetsReceived > 0 ? packetsLost / (packetsLost + packetsReceived) : 0;
+    peerDetailedStats.set(peerId, {
+      rtt: rtt || 0,
+      packetLoss: packetLossRate,
+      bitrate: bitrate
+    });
   } catch (err) {
     console.warn(`Failed to get stats for peer ${peerId}:`, err);
   }
@@ -667,6 +983,9 @@ function startConnectionQualityMonitoring() {
       }
     });
 
+    // Update bandwidth stats
+    updateBandwidthStats();
+
     // Update UI after checking all peers
     updatePeersList();
   }, 3000); // Check every 3 seconds
@@ -680,8 +999,50 @@ function stopConnectionQualityMonitoring() {
     clearInterval(connectionQualityInterval);
     connectionQualityInterval = null;
     peerConnectionQuality.clear();
+    peerDetailedStats.clear();
     console.log('📊 Stopped connection quality monitoring');
   }
+}
+
+/**
+ * Update bandwidth statistics display
+ */
+function updateBandwidthStats() {
+  if (!connected || !meshConnection) {
+    bandwidthStats.style.display = 'none';
+    return;
+  }
+
+  const now = Date.now();
+  const peers = meshConnection.getPeers();
+  
+  if (peers.length === 0) {
+    bandwidthStats.style.display = 'none';
+    return;
+  }
+
+  // Show bandwidth stats
+  bandwidthStats.style.display = 'flex';
+
+  // Calculate current bandwidth (aggregate all peers)
+  let totalUpload = 0;
+  let totalDownload = 0;
+
+  peers.forEach(peer => {
+    const stats = peerDetailedStats.get(peer.peerId);
+    if (stats) {
+      // Bitrate is per peer, sum them up
+      totalDownload += stats.bitrate;
+      // For upload, we assume symmetric for now (can be improved)
+      totalUpload += stats.bitrate * 0.8; // Estimate upload as 80% of download
+    }
+  });
+
+  currentUploadBandwidth = Math.round(totalUpload);
+  currentDownloadBandwidth = Math.round(totalDownload);
+
+  uploadBandwidth.textContent = currentUploadBandwidth.toFixed(0);
+  downloadBandwidth.textContent = currentDownloadBandwidth.toFixed(0);
 }
 
 /**
@@ -696,6 +1057,13 @@ async function connect() {
     
     // Update user display
     currentUsername.textContent = username;
+    
+    // Update avatar with initials
+    const avatarIcon = userAvatar.querySelector('.avatar-icon');
+    if (avatarIcon) {
+      avatarIcon.textContent = getInitials(username);
+    }
+    userAvatar.style.background = getAvatarColor(username);
 
     if (!signalingUrl || !roomId) {
       alert('Please enter signaling server URL and room ID');
@@ -723,21 +1091,59 @@ async function connect() {
     // Wait for socket to connect
     await new Promise<void>((resolve, reject) => {
       socket!.on('connect', () => {
-        console.log('Connected to signaling server');
+        console.log('[SOCKET] Connected to signaling server');
+        console.log('[SOCKET] Socket ID:', socket!.id);
+        console.log('[SOCKET] Peer ID:', peerId);
         updateStatus('connecting', 'Joining room...');
         resolve();
       });
 
       socket!.on('connect_error', (err: Error) => {
+        console.error('[SOCKET] Connection error:', err);
         console.error('Signaling server connection error:', err);
         reject(err);
       });
+    });
+
+    // Store reconnect data for auto-reconnect
+    reconnectData = { signalingUrl, roomId, username };
+    reconnectAttempts = 0; // Reset on successful connection
+    
+    // Save to recent rooms
+    saveRecentRoom(roomId);
+
+    // Set up socket event handlers for disconnection
+    socket.on('disconnect', (reason) => {
+      console.log('[SOCKET] ❌ DISCONNECTED');
+      console.log('[SOCKET] Reason:', reason);
+      console.log('[SOCKET] Peer ID:', peerId);
+      console.log('[SOCKET] Room:', currentRoomId);
+      console.log('[SOCKET] Connected status:', connected);
+      console.log('[SOCKET] Timestamp:', new Date().toISOString());
+      
+      // Only auto-reconnect if it was unexpected (not user-initiated)
+      if (reason === 'transport close' || reason === 'transport error' || reason === 'ping timeout') {
+        console.log('[SOCKET] Unexpected disconnection - will auto-reconnect');
+        updateStatus('connecting', 'Connection lost, reconnecting...');
+        attemptReconnect();
+      } else {
+        console.log('[SOCKET] Disconnection reason does not trigger auto-reconnect:', reason);
+      }
+    });
+
+    socket.on('error', (err) => {
+      console.error('Socket error:', err);
     });
 
     // Store room ID for later use
     currentRoomId = roomId;
 
     // Create mesh connection
+    console.log('[MESH] Creating mesh connection...');
+    console.log('[MESH] Room:', roomId);
+    console.log('[MESH] Peer ID:', peerId);
+    console.log('[MESH] Username:', username);
+    
     meshConnection = new MeshConnection({
       signalingUrl,
       roomId,
@@ -747,16 +1153,19 @@ async function connect() {
 
     // Set up event handlers
     meshConnection.onPeerJoined((peerId, username) => {
-      console.log(`Peer joined: ${peerId} (${username})`);
+      console.log('[MESH] ✅ Peer joined:', peerId, '('+username+')');
+      console.log('[MESH] Total peers now:', meshConnection.getPeers().length);
       playNotificationSound('join');
       updatePeersList();
     });
 
     meshConnection.onPeerLeft((peerId) => {
-      console.log(`Peer left: ${peerId}`);
+      console.log('[MESH] ❌ Peer left:', peerId);
+      console.log('[MESH] Total peers now:', meshConnection.getPeers().length);
       playNotificationSound('leave');
       audioManager?.removeRemoteStream(peerId);
       removeRemoteScreen(peerId); // Also remove their screen share if any
+      cleanupSpatialAudioForPeer(peerId); // Cleanup spatial audio
       updatePeersList();
     });
 
@@ -777,10 +1186,32 @@ async function connect() {
         if (audioTracks.length > 0) {
           const audioOnlyStream = new MediaStream(audioTracks);
           audioManager?.addRemoteStream(peerId, audioOnlyStream);
+          
+          // Setup spatial audio if enabled
+          if (spatialAudioEnabled) {
+            setTimeout(() => {
+              const peers = meshConnection?.getPeers() || [];
+              const peerIndex = peers.findIndex(p => p.peerId === peerId);
+              if (peerIndex >= 0) {
+                setupSpatialAudioForPeer(peerId, audioOnlyStream, peerIndex, peers.length);
+              }
+            }, 500); // Small delay to ensure audio element is created
+          }
         }
       } else {
         // Audio only
         audioManager?.addRemoteStream(peerId, stream);
+        
+        // Setup spatial audio if enabled
+        if (spatialAudioEnabled) {
+          setTimeout(() => {
+            const peers = meshConnection?.getPeers() || [];
+            const peerIndex = peers.findIndex(p => p.peerId === peerId);
+            if (peerIndex >= 0) {
+              setupSpatialAudioForPeer(peerId, stream, peerIndex, peers.length);
+            }
+          }, 500); // Small delay to ensure audio element is created
+        }
       }
       
       updatePeersList();
@@ -804,7 +1235,9 @@ async function connect() {
     });
 
     // Connect to room
+    console.log('[MESH] Connecting to room...');
     await meshConnection.connect(socket, stream);
+    console.log('[MESH] \u2705 Successfully connected to room');
 
     connected = true;
     updateStatus('connected', `Connected to room: ${roomId}`);
@@ -834,12 +1267,34 @@ async function connect() {
       }
     });
     
+    socket.on('screen-ready', (data: { sharerPeerId: string }) => {
+      console.log(`Screen ready from ${data.sharerPeerId}, extracting tracks from peer connection`);
+      // Get the peer connection and extract video tracks
+      if (meshConnection) {
+        const peerInfo = meshConnection.getPeer(data.sharerPeerId);
+        if (peerInfo?.connection) {
+          // Get all receivers and find video tracks
+          const receivers = peerInfo.connection.getReceivers();
+          const videoTracks = receivers
+            .map(receiver => receiver.track)
+            .filter(track => track && track.kind === 'video' && track.readyState === 'live');
+          
+          if (videoTracks.length > 0) {
+            console.log(`Found ${videoTracks.length} video tracks for ${data.sharerPeerId}`);
+            const screenStream = new MediaStream(videoTracks);
+            handleRemoteScreen(data.sharerPeerId, screenStream);
+          } else {
+            console.error(`No live video tracks found for ${data.sharerPeerId}`);
+          }
+        }
+      }
+    });
+    
     // Update UI
     connectBtn.style.display = 'none';
     disconnectBtn.style.display = 'block';
     muteBtn.disabled = false;
     deafenBtn.disabled = false;
-    pttToggleBtn.disabled = false;
     screenShareBtn.disabled = false;
     signalingUrlInput.disabled = true;
     roomIdInput.disabled = true;
@@ -847,22 +1302,23 @@ async function connect() {
 
     // Enable chat
     chatInput.disabled = false;
-    chatInput.placeholder = 'Message #general-chat';
+    chatInput.placeholder = 'Message #general-chat (paste images with Ctrl+V)';
     chatSendBtn.disabled = false;
-    chatImageBtn.disabled = false;
     chatEmptyState.classList.add('hidden');
 
     // Initialize button states
     updateMuteButton();
     updateDeafenButton();
 
-    // Switch to connected view
-    centeredConnection.style.display = 'none';
-    leftSidebar.style.display = 'flex';
-    mainContent.style.display = 'flex';
-    disconnectedView.style.display = 'none';
-    connectedView.style.display = 'flex';
-    rightSidebar.style.display = 'flex';
+    // Switch to connected view with smooth transition
+    await transitionView(
+      [centeredConnection, disconnectedView],
+      [leftSidebar, mainContent, connectedView, rightSidebar]
+    );
+    
+    // Show resize handles
+    if (leftResizeHandle) leftResizeHandle.style.display = '';
+    if (rightResizeHandle) rightResizeHandle.style.display = '';
 
     updatePeersList();
     
@@ -883,8 +1339,16 @@ async function connect() {
     
   } catch (err) {
     console.error('Connection error:', err);
-    updateStatus('disconnected', `Error: ${(err as Error).message}`);
-    disconnect();
+    
+    // Only show disconnected status if not auto-reconnecting
+    // During auto-reconnect, let the reconnect logic handle status messages
+    if (!isReconnecting) {
+      updateStatus('disconnected', `Error: ${(err as Error).message}`);
+      disconnect();
+    } else {
+      // Just throw the error back to reconnect handler
+      throw err;
+    }
   }
 }
 
@@ -894,6 +1358,9 @@ async function connect() {
 function disconnect() {
   console.log('Disconnecting...');
   
+  // Cancel any pending auto-reconnect attempts
+  cancelReconnect();
+  
   // Stop audio health check
   stopAudioHealthCheck();
   
@@ -902,6 +1369,9 @@ function disconnect() {
   
   // Stop local voice activity detection
   cleanupLocalVoiceActivity();
+  
+  // Cleanup spatial audio
+  disableSpatialAudio();
   
   // Cleanup chat
   cleanupChat();
@@ -930,7 +1400,6 @@ function disconnect() {
   disconnectBtn.style.display = 'none';
   muteBtn.disabled = true;
   deafenBtn.disabled = true;
-  pttToggleBtn.disabled = true;
   screenShareBtn.disabled = true;
   signalingUrlInput.disabled = false;
   roomIdInput.disabled = false;
@@ -938,18 +1407,19 @@ function disconnect() {
   
   // Disable chat
   chatInput.disabled = true;
-  chatInput.placeholder = 'Connect to start chatting';
+  chatInput.placeholder = 'Connect to start chatting (paste images with Ctrl+V)';
   chatSendBtn.disabled = true;
-  chatImageBtn.disabled = true;
   chatEmptyState.classList.remove('hidden');
   
-  // Switch to disconnected view
-  centeredConnection.style.display = 'flex';
-  leftSidebar.style.display = 'none';
-  mainContent.style.display = 'none';
-  disconnectedView.style.display = 'none';
-  connectedView.style.display = 'none';
-  rightSidebar.style.display = 'none';
+  // Switch to disconnected view with smooth transition
+  transitionView(
+    [leftSidebar, mainContent, connectedView, rightSidebar],
+    [centeredConnection]
+  );
+  
+  // Hide resize handles
+  if (leftResizeHandle) leftResizeHandle.style.display = 'none';
+  if (rightResizeHandle) rightResizeHandle.style.display = 'none';
   
   // Stop screen sharing if active
   if (isScreenSharing) {
@@ -971,6 +1441,77 @@ function disconnect() {
   // Clear screen availability tracking
   remoteScreenAvailable.clear();
   screenViewers.clear();
+  screenTracksAdded.clear();
+}
+
+/**
+ * Attempt to auto-reconnect to the room
+ */
+async function attemptReconnect() {
+  if (!reconnectData || isReconnecting) return;
+  
+  if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+    console.log('Max reconnection attempts reached, giving up');
+    updateStatus('disconnected', `Failed to reconnect after ${MAX_RECONNECT_ATTEMPTS} attempts`);
+    isReconnecting = false;
+    reconnectAttempts = 0;
+    reconnectData = null;
+    return;
+  }
+
+  reconnectAttempts++;
+  isReconnecting = true;
+
+  console.log(`Attempting to reconnect (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
+  // Only show status immediately after 2nd attempt or later
+  const showImmediate = reconnectAttempts > 1;
+  showReconnectingStatus(`Reconnecting... (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`, showImmediate);
+
+  try {
+    // Try to reconnect
+    signalingUrlInput.value = reconnectData.signalingUrl;
+    roomIdInput.value = reconnectData.roomId;
+    usernameInput.value = reconnectData.username;
+
+    await connect();
+
+    // Success! Reset reconnect state
+    console.log('Reconnection successful!');
+    reconnectAttempts = 0;
+    isReconnecting = false;
+    reconnectData = null;
+    clearReconnectingStatus();
+    if (reconnectTimeout) {
+      clearTimeout(reconnectTimeout);
+      reconnectTimeout = null;
+    }
+  } catch (err) {
+    console.error(`Reconnection attempt ${reconnectAttempts} failed:`, err);
+    
+    // Schedule next attempt
+    const delay = RECONNECT_DELAY_MS * Math.pow(2, reconnectAttempts - 1); // Exponential backoff
+    // Always show countdown immediately since we're waiting
+    clearReconnectingStatus();
+    updateStatus('connecting', `Reconnecting in ${Math.ceil(delay / 1000)}s... (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
+    
+    reconnectTimeout = setTimeout(() => {
+      attemptReconnect();
+    }, delay);
+  }
+}
+
+/**
+ * Cancel auto-reconnect
+ */
+function cancelReconnect() {
+  if (reconnectTimeout) {
+    clearTimeout(reconnectTimeout);
+    reconnectTimeout = null;
+  }
+  clearReconnectingStatus();
+  isReconnecting = false;
+  reconnectAttempts = 0;
+  reconnectData = null;
 }
 
 /**
@@ -1213,9 +1754,10 @@ async function startScreenShare() {
     localScreenVideo.srcObject = screenStream;
     screenContainer.style.display = 'block';
     
-    // Update button state
-    screenShareBtn.textContent = '🖥️ Sharing...';
-    screenShareBtn.className = 'btn-success';
+    // Update button state with muted icon style
+    screenShareBtn.classList.add('muted');
+    screenShareBtn.classList.remove('active');
+    screenShareBtn.title = 'Stop Sharing Screen';
     
     // Notify peers that screen is available (but don't send video yet)
     if (socket && currentRoomId) {
@@ -1271,11 +1813,13 @@ function stopScreenShare() {
   screenContainer.style.display = 'none';
   
   // Update button state
-  screenShareBtn.textContent = '🖥️ Share Screen';
-  screenShareBtn.className = 'btn-primary';
+  screenShareBtn.classList.remove('muted');
+  screenShareBtn.classList.add('active');
+  screenShareBtn.title = 'Share Screen';
   
-  // Clear viewers list
+  // Clear viewers and tracks tracking
   screenViewers.clear();
+  screenTracksAdded.clear();
   
   // Notify peers
   if (socket && connected && currentRoomId) {
@@ -1327,6 +1871,15 @@ function openFullscreenOverlay(stream: MediaStream | null, peerId: string) {
 function handleRemoteScreen(peerId: string, stream: MediaStream) {
   remoteScreens.set(peerId, stream);
   
+  // Get peer username
+  let peerUsername = peerId;
+  if (meshConnection) {
+    const peer = meshConnection.getPeer(peerId);
+    if (peer?.username) {
+      peerUsername = peer.username;
+    }
+  }
+  
   // Create or update the video element
   let screenItem = document.getElementById(`screen-${peerId}`);
   if (!screenItem) {
@@ -1335,8 +1888,20 @@ function handleRemoteScreen(peerId: string, stream: MediaStream) {
     screenItem.className = 'remote-screen-item';
     screenItem.innerHTML = `
       <div class="screen-header">
-        <span>${peerId}</span>
-        <button class="fullscreen-btn" title="Full Screen">⛶</button>
+        <span class="screen-header-title">${peerUsername}'s Screen</span>
+        <div class="screen-header-actions">
+          <button class="fullscreen-btn" title="Full Screen">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
+            </svg>
+          </button>
+          <button class="disconnect-screen-btn" title="Stop Viewing">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
       </div>
       <video autoplay playsinline></video>
     `;
@@ -1344,10 +1909,15 @@ function handleRemoteScreen(peerId: string, stream: MediaStream) {
     
     // Add full screen button handler — opens overlay
     const fullscreenBtn = screenItem.querySelector('.fullscreen-btn') as HTMLButtonElement;
+    const disconnectBtn = screenItem.querySelector('.disconnect-screen-btn') as HTMLButtonElement;
     const video = screenItem.querySelector('video') as HTMLVideoElement;
     
     fullscreenBtn.addEventListener('click', () => {
-      openFullscreenOverlay(video.srcObject as MediaStream, peerId);
+      openFullscreenOverlay(video.srcObject as MediaStream, peerUsername);
+    });
+
+    disconnectBtn.addEventListener('click', () => {
+      stopViewingScreen(peerId);
     });
   }
   
@@ -1402,13 +1972,13 @@ function stopViewingScreen(targetPeerId: string) {
   }
   
   // Remove the video element if it exists
-  const screenItem = document.getElementById(`screen-${peerId}`);
+  const screenItem = document.getElementById(`screen-${targetPeerId}`);
   if (screenItem) {
     screenItem.remove();
   }
   
   // Remove from remoteScreens but keep in remoteScreenAvailable
-  remoteScreens.delete(peerId);
+  remoteScreens.delete(targetPeerId);
   
   // Hide container if no videos playing
   if (remoteScreens.size === 0) {
@@ -1437,6 +2007,8 @@ function removeRemoteScreen(peerId: string) {
     remoteScreensContainer.style.display = 'none';
   }
   
+  // Update screen sharing list
+  updatePeersList();
   // Update peers list to grey out the button
   updatePeersList();
 }
@@ -1459,10 +2031,51 @@ function addScreenToViewer(viewerPeerId: string) {
     return;
   }
   
-  // Add the screen stream as a separate stream (SimplePeer supports multiple streams)
+  // Check if we've already added screen tracks to this peer connection
+  if (screenTracksAdded.has(viewerPeerId)) {
+    console.log(`Screen tracks already added to ${viewerPeerId}, notifying viewer`);
+    // Notify the viewer that the screen is ready (tracks already in connection)
+    if (socket && currentRoomId) {
+      socket.emit('screen-ready', {
+        roomId: currentRoomId,
+        viewerPeerId: viewerPeerId,
+        sharerPeerId: peerId
+      });
+    }
+    return;
+  }
+  
+  // Check if stream tracks are active before adding
+  const videoTracks = screenStream.getVideoTracks();
+  if (videoTracks.length === 0 || videoTracks[0].readyState !== 'live') {
+    console.error(`Screen stream tracks are not active for ${viewerPeerId}`);
+    return;
+  }
+  
+  // Add the screen stream tracks individually to avoid "track removed" errors
   try {
-    peerInfo.connection.addStream(screenStream);
-    console.log(`Screen stream added for ${viewerPeerId}`);
+    let tracksAdded = false;
+    // Add video tracks from screen stream
+    videoTracks.forEach(track => {
+      try {
+        peerInfo.connection.addTrack(track, screenStream);
+        console.log(`Added screen video track for ${viewerPeerId}`);
+        tracksAdded = true;
+      } catch (trackErr: any) {
+        // If track already exists, mark as added anyway
+        if (trackErr.message?.includes('already been added')) {
+          console.log(`Screen track already exists for ${viewerPeerId}`);
+          tracksAdded = true;
+        } else {
+          console.error(`Error adding screen track to viewer ${viewerPeerId}:`, trackErr);
+        }
+      }
+    });
+    
+    if (tracksAdded) {
+      screenTracksAdded.add(viewerPeerId);
+      console.log(`Screen stream successfully added for ${viewerPeerId}`);
+    }
   } catch (err) {
     console.error(`Error adding screen to viewer ${viewerPeerId}:`, err);
   }
@@ -1472,26 +2085,9 @@ function addScreenToViewer(viewerPeerId: string) {
  * Remove screen video from a specific viewer
  */
 function removeScreenFromViewer(viewerPeerId: string) {
-  if (!meshConnection || !screenStream) {
-    return;
-  }
-  
   screenViewers.delete(viewerPeerId);
-  console.log(`Removing screen video for viewer: ${viewerPeerId}`);
-  
-  // Get the peer connection
-  const peerInfo = meshConnection.getPeer(viewerPeerId);
-  if (!peerInfo) {
-    return;
-  }
-  
-  // Remove the screen stream from the peer connection
-  try {
-    peerInfo.connection.removeStream(screenStream);
-    console.log(`Screen stream removed for ${viewerPeerId}`);
-  } catch (err) {
-    console.error(`Error removing screen from viewer ${viewerPeerId}:`, err);
-  }
+  console.log(`Viewer ${viewerPeerId} stopped viewing screen (tracks remain for re-viewing)`);
+  // Note: We keep tracks in the connection (screenTracksAdded) for re-viewing
 }
 
 /**
@@ -1561,6 +2157,14 @@ function setupLocalVoiceActivity() {
   if (!stream) return;
 
   try {
+    // Add waveform to user avatar if not already present
+    if (!userAvatar.querySelector('.waveform-container')) {
+      const waveform = createWaveform();
+      waveform.style.display = 'none';
+      waveform.style.marginLeft = '8px';
+      userAvatar.appendChild(waveform);
+    }
+    
     localVoiceAudioContext = new AudioContext();
     const analyser = localVoiceAudioContext.createAnalyser();
     analyser.fftSize = 256;
@@ -1577,6 +2181,8 @@ function setupLocalVoiceActivity() {
         if (speakingIndicator.style.display !== 'none') {
           speakingIndicator.style.display = 'none';
           userAvatar.classList.remove('speaking');
+          const waveform = userAvatar.querySelector('.waveform-container') as HTMLElement;
+          if (waveform) waveform.style.display = 'none';
         }
         return;
       }
@@ -1594,12 +2200,26 @@ function setupLocalVoiceActivity() {
       const threshold = 20;
       const isSpeaking = average > threshold;
       
+      const waveform = userAvatar.querySelector('.waveform-container') as HTMLElement;
+      
       if (isSpeaking) {
         speakingIndicator.style.display = 'block';
         userAvatar.classList.add('speaking');
+        if (waveform) {
+          waveform.style.display = 'flex';
+          waveform.querySelectorAll('.waveform-bar').forEach(bar => {
+            bar.classList.add('active');
+          });
+        }
       } else {
         speakingIndicator.style.display = 'none';
         userAvatar.classList.remove('speaking');
+        if (waveform) {
+          waveform.style.display = 'none';
+          waveform.querySelectorAll('.waveform-bar').forEach(bar => {
+            bar.classList.remove('active');
+          });
+        }
       }
     }, 100);
   } catch (err) {
@@ -1621,6 +2241,12 @@ function cleanupLocalVoiceActivity() {
   }
   speakingIndicator.style.display = 'none';
   userAvatar.classList.remove('speaking');
+  
+  // Remove waveform from user avatar
+  const waveform = userAvatar.querySelector('.waveform-container');
+  if (waveform) {
+    waveform.remove();
+  }
 }
 
 /**
@@ -1664,6 +2290,12 @@ function toggleDeafen() {
 
   isDeafened = audioManager.toggleDeafen();
   
+  // Deafening should also mute the microphone
+  if (isDeafened && !isMuted) {
+    isMuted = audioManager.toggleMute();
+    updateMuteButton();
+  }
+  
   updateDeafenButton();
 }
 
@@ -1685,60 +2317,203 @@ function updateDeafenButton() {
 }
 
 /**
- * Toggle push-to-talk mode
+ * Update voice sensitivity threshold
  */
-function togglePushToTalk() {
-  pushToTalkEnabled = !pushToTalkEnabled;
+async function updateVoiceSensitivity() {
+  if (!audioManager) return;
   
-  if (pushToTalkEnabled) {
-    pttToggleBtn.textContent = '🔄 Push-to-Talk: ON';
-    pttToggleBtn.className = 'btn-success';
-    pttIndicator.classList.add('active');
-    
-    // Mute by default in PTT mode
-    if (audioManager && !audioManager.isMuted()) {
-      audioManager.setMuted(true);
+  const sensitivity = parseInt(voiceSensitivitySlider.value);
+  voiceSensitivityValue.textContent = `${sensitivity} dB`;
+  
+  await audioManager.updateConfig({ noiseGateThreshold: sensitivity });
+  saveSettings(getCurrentSettings());
+  console.log('Voice sensitivity updated:', sensitivity);
+}
+
+/**
+ * Toggle input monitoring (hear your own microphone)
+ */
+async function toggleInputMonitoring() {
+  if (!audioManager) return;
+  
+  const enabled = inputMonitoringToggle.checked;
+  
+  if (enabled && !inputMonitoringNode) {
+    // Create audio feedback loop
+    try {
+      const stream = audioManager.getLocalStream();
+      if (!stream) return;
+      
+      const audioContext = new AudioContext();
+      const source = audioContext.createMediaStreamSource(stream);
+      const gainNode = audioContext.createGain();
+      
+      // Set lower volume to avoid feedback
+      gainNode.gain.value = 0.3;
+      
+      source.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      inputMonitoringNode = gainNode;
+      console.log('Input monitoring enabled');
+    } catch (err) {
+      console.error('Failed to enable input monitoring:', err);
+      inputMonitoringToggle.checked = false;
     }
-  } else {
-    pttToggleBtn.textContent = '🔄 Push-to-Talk: OFF';
-    pttToggleBtn.className = 'btn-primary';
-    pttIndicator.classList.remove('active');
-    pushToTalkActive = false;
-    
-    // Unmute when disabling PTT
-    if (audioManager && audioManager.isMuted()) {
-      audioManager.setMuted(false);
-    }
-    updateMuteButton();
+  } else if (!enabled && inputMonitoringNode) {
+    // Disconnect and cleanup
+    inputMonitoringNode.disconnect();
+    inputMonitoringNode = null;
+    console.log('Input monitoring disabled');
   }
   
   saveSettings(getCurrentSettings());
 }
 
 /**
- * Handle push-to-talk key down
+ * Change color scheme
  */
-function handlePushToTalkStart() {
-  if (!pushToTalkEnabled || !audioManager || pushToTalkActive) return;
+function changeColorScheme() {
+  const scheme = colorSchemeSelect.value;
+  console.log('changeColorScheme called, scheme:', scheme);
+  console.log('Current data-theme:', document.documentElement.getAttribute('data-theme'));
   
-  pushToTalkActive = true;
-  audioManager.setMuted(false);
-  pttIndicator.textContent = '🎤 TALKING (Hold SPACE)';
-  pttIndicator.style.background = '#10b981';
-  pttIndicator.style.color = 'white';
+  if (scheme === 'default') {
+    document.documentElement.removeAttribute('data-theme');
+  } else {
+    document.documentElement.setAttribute('data-theme', scheme);
+  }
+  
+  console.log('New data-theme:', document.documentElement.getAttribute('data-theme'));
+  saveSettings(getCurrentSettings());
 }
 
 /**
- * Handle push-to-talk key up
+ * Toggle spatial audio
  */
-function handlePushToTalkEnd() {
-  if (!pushToTalkEnabled || !audioManager || !pushToTalkActive) return;
+function toggleSpatialAudio() {
+  spatialAudioEnabled = spatialAudioToggle.checked;
   
-  pushToTalkActive = false;
-  audioManager.setMuted(true);
-  pttIndicator.textContent = 'Hold SPACE to talk';
-  pttIndicator.style.background = '#fef3c7';
-  pttIndicator.style.color = '#92400e';
+  if (spatialAudioEnabled) {
+    enableSpatialAudio();
+  } else {
+    disableSpatialAudio();
+  }
+  
+  saveSettings(getCurrentSettings());
+  console.log('Spatial audio:', spatialAudioEnabled ? 'enabled' : 'disabled');
+}
+
+/**
+ * Enable spatial audio for all connected peers
+ */
+function enableSpatialAudio() {
+  if (!meshConnection) return;
+  
+  // Create audio context if not exists
+  if (!spatialAudioContext) {
+    spatialAudioContext = new AudioContext();
+  }
+  
+  const peers = meshConnection.getPeers();
+  peers.forEach((peer, index) => {
+    if (peer.connected) {
+      const audioElement = document.getElementById(`audio-${peer.peerId}`) as HTMLAudioElement;
+      if (audioElement && audioElement.srcObject) {
+        setupSpatialAudioForPeer(peer.peerId, audioElement.srcObject as MediaStream, index, peers.length);
+        // Mute the original audio element to avoid double audio
+        audioElement.muted = true;
+      }
+    }
+  });
+}
+
+/**
+ * Setup spatial audio for a specific peer
+ */
+function setupSpatialAudioForPeer(peerId: string, stream: MediaStream, peerIndex: number, totalPeers: number) {
+  if (!spatialAudioContext) return;
+  
+  // Clean up existing spatial audio for this peer
+  cleanupSpatialAudioForPeer(peerId);
+  
+  try {
+    // Create audio nodes
+    const source = spatialAudioContext.createMediaStreamSource(stream);
+    const panner = spatialAudioContext.createPanner();
+    const gainNode = spatialAudioContext.createGain();
+    
+    // Configure panner for 3D audio
+    panner.panningModel = 'HRTF';
+    panner.distanceModel = 'inverse';
+    panner.refDistance = 1;
+    panner.maxDistance = 10;
+    panner.rolloffFactor = 1;
+    panner.coneInnerAngle = 360;
+    panner.coneOuterAngle = 0;
+    panner.coneOuterGain = 0;
+    
+    // Position peers in a circle around the listener
+    const angle = (peerIndex / totalPeers) * 2 * Math.PI;
+    const radius = 2; // Distance from listener
+    const x = Math.cos(angle) * radius;
+    const z = Math.sin(angle) * radius;
+    const y = 0; // Same height as listener
+    
+    panner.setPosition(x, y, z);
+    
+    // Connect nodes: source -> panner -> gain -> destination
+    source.connect(panner);
+    panner.connect(gainNode);
+    gainNode.connect(spatialAudioContext.destination);
+    
+    // Store for later cleanup
+    spatialPanners.set(peerId, { panner, source, gain: gainNode });
+    
+    console.log(`Spatial audio setup for ${peerId} at position (${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)})`);
+  } catch (err) {
+    console.error(`Failed to setup spatial audio for ${peerId}:`, err);
+  }
+}
+
+/**
+ * Cleanup spatial audio for a peer
+ */
+function cleanupSpatialAudioForPeer(peerId: string) {
+  const spatialAudio = spatialPanners.get(peerId);
+  if (spatialAudio) {
+    try {
+      spatialAudio.source.disconnect();
+      spatialAudio.panner.disconnect();
+      spatialAudio.gain.disconnect();
+    } catch (err) {
+      // Ignore disconnect errors
+    }
+    spatialPanners.delete(peerId);
+  }
+  
+  // Unmute original audio element
+  const audioElement = document.getElementById(`audio-${peerId}`) as HTMLAudioElement;
+  if (audioElement) {
+    audioElement.muted = false;
+  }
+}
+
+/**
+ * Disable spatial audio for all peers
+ */
+function disableSpatialAudio() {
+  // Cleanup all spatial audio nodes
+  for (const peerId of spatialPanners.keys()) {
+    cleanupSpatialAudioForPeer(peerId);
+  }
+  spatialPanners.clear();
+  
+  // Close audio context
+  if (spatialAudioContext) {
+    spatialAudioContext.close().catch(() => {});
+    spatialAudioContext = null;
+  }
 }
 
 /**
@@ -1767,24 +2542,30 @@ function handleKeyboard(event: KeyboardEvent) {
     return;
   }
   
+  // Only handle shortcuts with Ctrl+Shift to avoid conflicts with games
+  if (!event.ctrlKey || !event.shiftKey) {
+    return;
+  }
+  
+  if (!connected) {
+    return;
+  }
+  
   switch (event.key.toLowerCase()) {
     case 'm':
-      if (connected) toggleMute();
+      // Ctrl+Shift+M = Mute
+      toggleMute();
+      event.preventDefault();
+      break;
+    case 'h':
+      // Ctrl+Shift+H = Deafen (H for Headphones)
+      toggleDeafen();
+      event.preventDefault();
       break;
     case 'd':
-      if (connected) toggleDeafen();
-      break;
-    case 'escape':
-      if (connected) disconnect();
-      break;
-    case ' ':
-      if (event.type === 'keydown' && connected) {
-        event.preventDefault();
-        handlePushToTalkStart();
-      } else if (event.type === 'keyup' && connected) {
-        event.preventDefault();
-        handlePushToTalkEnd();
-      }
+      // Ctrl+Shift+D = Disconnect
+      disconnect();
+      event.preventDefault();
       break;
   }
 }
@@ -1794,7 +2575,61 @@ connectBtn.addEventListener('click', connect);
 disconnectBtn.addEventListener('click', disconnect);
 muteBtn.addEventListener('click', toggleMute);
 deafenBtn.addEventListener('click', toggleDeafen);
-pttToggleBtn.addEventListener('click', togglePushToTalk);
+
+// Copy room link button
+copyLinkBtn.addEventListener('click', () => {
+  const roomId = roomIdInput.value.trim();
+  if (!roomId) {
+    alert('Please enter a room ID first');
+    return;
+  }
+  
+  const roomLink = `voicelink://room/${roomId}`;
+  
+  // Copy to clipboard
+  navigator.clipboard.writeText(roomLink).then(() => {
+    // Visual feedback
+    const originalHTML = copyLinkBtn.innerHTML;
+    copyLinkBtn.classList.add('copied');
+    copyLinkBtn.innerHTML = `
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="20 6 9 17 4 12"></polyline>
+      </svg>
+      Copied!
+    `;
+    
+    setTimeout(() => {
+      copyLinkBtn.classList.remove('copied');
+      copyLinkBtn.innerHTML = originalHTML;
+    }, 2000);
+  }).catch(err => {
+    console.error('Failed to copy:', err);
+    alert('Failed to copy link to clipboard');
+  });
+});
+
+// Handle deep link from main process
+if (window.electron?.ipcRenderer) {
+  window.electron.ipcRenderer.on('join-room-from-link', (roomId: string) => {
+    console.log('Received room ID from deep link:', roomId);
+    
+    // Set the room ID and focus the window
+    roomIdInput.value = roomId;
+    
+    // If not connected, show a notification
+    if (!connected) {
+      // Highlight the connect button
+      connectBtn.style.animation = 'pulse 1s ease-in-out 3';
+      setTimeout(() => {
+        connectBtn.style.animation = '';
+      }, 3000);
+      
+      // Optionally auto-connect (uncomment if you want automatic connection)
+      // setTimeout(() => connect(), 500);
+    }
+  });
+}
+
 // themeToggleBtn removed - always dark mode
 
 // Screen sharing listeners
@@ -1822,6 +2657,29 @@ screenQualitySelect.addEventListener('change', () => {
 echoCancellationToggle.addEventListener('change', updateAudioSettings);
 noiseSuppressionToggle.addEventListener('change', updateAudioSettings);
 autoGainControlToggle.addEventListener('change', updateAudioSettings);
+voiceSensitivitySlider.addEventListener('input', updateVoiceSensitivity);
+inputMonitoringToggle.addEventListener('change', toggleInputMonitoring);
+spatialAudioToggle.addEventListener('change', toggleSpatialAudio);
+colorSchemeSelect.addEventListener('change', changeColorScheme);
+
+// Interface effects listeners
+smoothTransitionsToggle.addEventListener('change', () => {
+  const enabled = smoothTransitionsToggle.checked;
+  document.documentElement.style.setProperty('--transition-speed', enabled ? '0.3s' : '0s');
+  console.log('Smooth transitions:', enabled);
+});
+
+animatedWaveformsToggle.addEventListener('change', () => {
+  const enabled = animatedWaveformsToggle.checked;
+  document.documentElement.classList.toggle('no-waveform-animation', !enabled);
+  console.log('Animated waveforms:', enabled);
+});
+
+fadeEffectsToggle.addEventListener('change', () => {
+  const enabled = fadeEffectsToggle.checked;
+  document.documentElement.classList.toggle('no-fade-effects', !enabled);
+  console.log('Fade effects:', enabled);
+});
 
 // Audio device change listener
 audioInputDeviceSelect.addEventListener('change', handleAudioDeviceChange);
@@ -1852,9 +2710,20 @@ settingsBtn.addEventListener('click', () => {
   settingsModal.style.display = 'flex';
 });
 
-settingsBtnMain.addEventListener('click', () => {
+fabSettings.addEventListener('click', () => {
   settingsModal.style.display = 'flex';
 });
+
+// Toggle advanced settings
+let advancedVisible = false;
+toggleAdvancedBtn.addEventListener('click', () => {
+  advancedVisible = !advancedVisible;
+  advancedSection.classList.toggle('visible', advancedVisible);
+  toggleAdvancedBtn.textContent = advancedVisible ? 'Advanced ▲' : 'Advanced ▼';
+});
+
+// Load recent rooms on startup
+loadRecentRooms();
 
 settingsCloseBtn.addEventListener('click', () => {
   settingsModal.style.display = 'none';
@@ -1875,6 +2744,75 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+// Settings tabs switching
+const settingsTabs = document.querySelectorAll('.settings-tab');
+const settingsTabContents = document.querySelectorAll('.settings-tab-content');
+
+console.log('Settings tabs found:', settingsTabs.length);
+console.log('Settings tab contents found:', settingsTabContents.length);
+
+// Verify interface-tab exists
+const interfaceTab = document.getElementById('interface-tab');
+const audioTab = document.getElementById('audio-tab');
+console.log('audio-tab element:', audioTab);
+console.log('interface-tab element:', interfaceTab);
+
+// Log all tab buttons and content divs
+settingsTabs.forEach((tab, index) => {
+  const tabName = (tab as HTMLElement).dataset.tab;
+  console.log(`Tab button ${index}:`, tabName, tab);
+});
+
+settingsTabContents.forEach((content, index) => {
+  console.log(`Tab content ${index}:`, content.id, content);
+});
+
+settingsTabs.forEach((tab, index) => {
+  const tabElement = tab as HTMLElement;
+  console.log(`Adding click listener to tab ${index}:`, tabElement.dataset.tab);
+  
+  tabElement.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    const targetTab = tabElement.dataset.tab;
+    console.log('==============================');
+    console.log('Tab clicked:', targetTab);
+    console.log('Event target:', e.target);
+    console.log('Current element:', tabElement);
+    
+    // Remove active class from all tabs and contents
+    settingsTabs.forEach(t => {
+      t.classList.remove('active');
+      console.log('Removed active from tab:', (t as HTMLElement).dataset.tab);
+    });
+    
+    settingsTabContents.forEach(c => {
+      c.classList.remove('active');
+      console.log('Removed active from content:', c.id);
+    });
+    
+    // Add active class to clicked tab
+    tabElement.classList.add('active');
+    console.log('Added active to tab:', targetTab);
+    
+    // Find and activate corresponding content
+    const targetContent = document.getElementById(`${targetTab}-tab`);
+    console.log('Looking for content with id:', `${targetTab}-tab`);
+    console.log('Target content element:', targetContent);
+    
+    if (targetContent) {
+      targetContent.classList.add('active');
+      console.log('✓ Successfully activated tab:', targetTab);
+      console.log('Content classes:', targetContent.className);
+    } else {
+      console.error('✗ Could not find content for tab:', targetTab);
+      console.error('Expected id:', `${targetTab}-tab`);
+    }
+    console.log('==============================');
+  });
+});
+
 // Chat event listeners
 chatSendBtn.addEventListener('click', sendTextMessage);
 
@@ -1885,17 +2823,52 @@ chatInput.addEventListener('keydown', (e) => {
   }
 });
 
-chatImageBtn.addEventListener('click', () => {
-  chatImageInput.click();
-});
+// Paste event for images
+chatInput.addEventListener('paste', (e) => {
+  const items = e.clipboardData?.items;
+  if (!items) return;
 
-chatImageInput.addEventListener('change', () => {
-  const file = chatImageInput.files?.[0];
-  if (file) {
-    sendImageMessage(file);
-    chatImageInput.value = ''; // Reset input
+  for (let i = 0; i < items.length; i++) {
+    if (items[i].type.indexOf('image') !== -1) {
+      e.preventDefault();
+      const file = items[i].getAsFile();
+      if (file) {
+        attachedImage = file;
+        updateChatInputVisual();
+      }
+      break;
+    }
   }
 });
+
+// Drag and drop for images
+chatInput.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+});
+
+chatInput.addEventListener('drop', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  
+  const files = e.dataTransfer?.files;
+  if (files && files.length > 0) {
+    const file = files[0];
+    if (file.type.startsWith('image/')) {
+      attachedImage = file;
+      updateChatInputVisual();
+    }
+  }
+});
+
+// Remove image button
+const removeImageBtn = document.getElementById('remove-image-btn');
+if (removeImageBtn) {
+  removeImageBtn.addEventListener('click', () => {
+    attachedImage = null;
+    updateChatInputVisual();
+  });
+}
 
 // Load saved settings
 const savedSettings = loadSettings();
@@ -1904,24 +2877,32 @@ usernameInput.value = savedSettings.username || defaultUsername;
 echoCancellationToggle.checked = savedSettings.echoCancellation;
 noiseSuppressionToggle.checked = savedSettings.noiseSuppression;
 autoGainControlToggle.checked = savedSettings.autoGainControl;
-pushToTalkEnabled = savedSettings.pushToTalkEnabled;
-
-if (pushToTalkEnabled) {
-  pttToggleBtn.textContent = '🔄 Push-to-Talk: ON';
-  pttToggleBtn.className = 'btn-success';
-  pttIndicator.classList.add('active');
+voiceSensitivitySlider.value = savedSettings.voiceSensitivity.toString();
+voiceSensitivityValue.textContent = `${savedSettings.voiceSensitivity} dB`;
+inputMonitoringToggle.checked = savedSettings.inputMonitoring;
+spatialAudioToggle.checked = savedSettings.spatialAudio;
+spatialAudioEnabled = savedSettings.spatialAudio;
+colorSchemeSelect.value = savedSettings.colorScheme;
+if (savedSettings.colorScheme === 'default') {
+  document.documentElement.removeAttribute('data-theme');
+} else {
+  document.documentElement.setAttribute('data-theme', savedSettings.colorScheme);
 }
 
 // Save settings when inputs change
 signalingUrlInput.addEventListener('change', () => saveSettings(getCurrentSettings()));
 usernameInput.addEventListener('change', () => saveSettings(getCurrentSettings()));
 
-// Initialize theme
-initTheme();
-
 // Initialize on load
 initAudioManager().then(() => {
   console.log('Audio manager initialized');
+  
+  // Enable input monitoring if it was previously enabled
+  if (savedSettings.inputMonitoring) {
+    toggleInputMonitoring();
+  }
+}).catch((err) => {
+  console.error('Failed to initialize audio manager:', err);
 });
 
 // Cleanup on window close
@@ -1930,6 +2911,197 @@ window.addEventListener('beforeunload', () => {
     disconnect();
   }
 });
+
+// ============================================================================
+// UI Enhancements: Resizable Panels, Waveforms, Transitions
+// ============================================================================
+
+/**
+ * Initialize resizable panels
+ */
+function initResizablePanels() {
+  let isResizing = false;
+  let currentHandle: HTMLElement | null = null;
+  let startX = 0;
+  let startWidth = 0;
+  let currentWidth = 0;
+
+  // Left sidebar resize
+  leftResizeHandle.addEventListener('mousedown', (e) => {
+    isResizing = true;
+    currentHandle = leftResizeHandle;
+    startX = e.clientX;
+    startWidth = leftSidebar.offsetWidth;
+    leftResizeHandle.classList.add('resizing');
+    leftSidebar.classList.add('resizing');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+
+  // Right sidebar resize
+  rightResizeHandle.addEventListener('mousedown', (e) => {
+    isResizing = true;
+    currentHandle = rightResizeHandle;
+    startX = e.clientX;
+    startWidth = rightSidebar.offsetWidth;
+    rightResizeHandle.classList.add('resizing');
+    rightSidebar.classList.add('resizing');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+
+  // Mouse move - throttled with requestAnimationFrame
+  document.addEventListener('mousemove', (e) => {
+    if (!isResizing || !currentHandle) return;
+
+    const delta = e.clientX - startX;
+
+    if (currentHandle === leftResizeHandle) {
+      currentWidth = Math.max(200, Math.min(500, startWidth + delta));
+      leftSidebar.style.width = `${currentWidth}px`;
+    } else if (currentHandle === rightResizeHandle) {
+      currentWidth = Math.max(250, Math.min(600, startWidth - delta));
+      rightSidebar.style.width = `${currentWidth}px`;
+    }
+  });
+
+  // Mouse up
+  document.addEventListener('mouseup', () => {
+    if (isResizing) {
+      isResizing = false;
+      leftResizeHandle.classList.remove('resizing');
+      rightResizeHandle.classList.remove('resizing');
+      leftSidebar.classList.remove('resizing');
+      rightSidebar.classList.remove('resizing');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      
+      // Save to localStorage only on mouseup
+      if (currentHandle === leftResizeHandle) {
+        localStorage.setItem('leftSidebarWidth', currentWidth.toString());
+      } else if (currentHandle === rightResizeHandle) {
+        localStorage.setItem('rightSidebarWidth', currentWidth.toString());
+      }
+      
+      currentHandle = null;
+    }
+  });
+
+  // Restore saved widths
+  const savedLeftWidth = localStorage.getItem('leftSidebarWidth');
+  const savedRightWidth = localStorage.getItem('rightSidebarWidth');
+  
+  if (savedLeftWidth) {
+    leftSidebar.style.width = `${savedLeftWidth}px`;
+  }
+  if (savedRightWidth) {
+    rightSidebar.style.width = `${savedRightWidth}px`;
+  }
+}
+
+/**
+ * Create waveform visualization element
+ */
+function createWaveform(): HTMLElement {
+  const container = document.createElement('div');
+  container.className = 'waveform-container';
+  
+  for (let i = 0; i < 5; i++) {
+    const bar = document.createElement('div');
+    bar.className = 'waveform-bar';
+    container.appendChild(bar);
+  }
+  
+  return container;
+}
+
+/**
+ * Update waveform visualization based on audio levels
+ */
+const waveformUpdaters = new Map<string, (active: boolean) => void>();
+
+function updateWaveform(peerId: string, active: boolean) {
+  const updater = waveformUpdaters.get(peerId);
+  if (updater) {
+    updater(active);
+  }
+}
+
+/**
+ * Add waveform to peer
+ */
+function addWaveformToPeer(peerId: string, waveformElement: HTMLElement) {
+  const bars = waveformElement.querySelectorAll('.waveform-bar') as NodeListOf<HTMLElement>;
+  
+  waveformUpdaters.set(peerId, (active: boolean) => {
+    bars.forEach(bar => {
+      if (active) {
+        bar.classList.add('active');
+      } else {
+        bar.classList.remove('active');
+      }
+    });
+  });
+}
+
+/**
+ * Smooth view transition
+ */
+async function transitionView(hideElements: HTMLElement[], showElements: HTMLElement[]) {
+  // Add exiting animation to elements being hidden
+  hideElements.forEach(el => {
+    if (el.style.display !== 'none') {
+      el.classList.add('view-exiting');
+    }
+  });
+
+  // Wait for exit animation
+  await new Promise(resolve => setTimeout(resolve, 200));
+
+  // Hide exiting elements
+  hideElements.forEach(el => {
+    el.style.display = 'none';
+    el.classList.remove('view-exiting');
+  });
+
+  // Show new elements with transition
+  showElements.forEach(el => {
+    el.style.display = 'flex';
+    el.classList.add('view-transition');
+  });
+
+  // Cleanup transition class
+  setTimeout(() => {
+    showElements.forEach(el => el.classList.remove('view-transition'));
+  }, 300);
+}
+
+/**
+ * Create loading spinner
+ */
+function createSpinner(large = false): HTMLElement {
+  const spinner = document.createElement('div');
+  spinner.className = large ? 'spinner spinner-large' : 'spinner';
+  return spinner;
+}
+
+/**
+ * Create loading dots
+ */
+function createLoadingDots(): HTMLElement {
+  const container = document.createElement('div');
+  container.className = 'loading-dots';
+  for (let i = 0; i < 3; i++) {
+    const dot = document.createElement('span');
+    container.appendChild(dot);
+  }
+  return container;
+}
+
+// Initialize resizable panels on load
+initResizablePanels();
 
 // ============================================================================
 // Chat Functions
@@ -1961,9 +3133,31 @@ function initializeChat() {
   // Enable chat interface
   chatInput.disabled = false;
   chatSendBtn.disabled = false;
-  chatImageBtn.disabled = false;
 
   console.log('Chat initialized');
+}
+
+/**
+ * Update chat input visual feedback
+ */
+function updateChatInputVisual() {
+  const previewContainer = document.getElementById('chat-image-preview');
+  const previewImg = document.getElementById('preview-img') as HTMLImageElement;
+  
+  if (!previewContainer || !previewImg) return;
+
+  if (attachedImage) {
+    // Show preview with image
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      previewImg.src = e.target?.result as string;
+      previewContainer.style.display = 'block';
+    };
+    reader.readAsDataURL(attachedImage);
+  } else {
+    previewContainer.style.display = 'none';
+    previewImg.src = '';
+  }
 }
 
 /**
@@ -2044,14 +3238,51 @@ function addMessageToUI(message: ChatMessage, animate: boolean = true) {
   content.className = 'chat-message-content';
 
   if (message.type === 'text') {
-    // Convert URLs to clickable links and preserve formatting
+    // Process code blocks first
+    let processedContent = message.content;
+    
+    // Code block regex: ```lang\ncode\n```
+    const codeBlockRegex = /```(\w*)\n?([\s\S]*?)```/g;
+    const codeBlocks: Array<{placeholder: string, html: string}> = [];
+    
+    processedContent = processedContent.replace(codeBlockRegex, (match, lang, code) => {
+      const placeholder = `__CODE_BLOCK_${codeBlocks.length}__`;
+      const trimmedCode = code.trim();
+      const langLabel = lang || 'text';
+      const html = `<div class="chat-code-block" data-lang="${langLabel}">${escapeHtml(trimmedCode)}</div>`;
+      codeBlocks.push({ placeholder, html });
+      return placeholder;
+    });
+    
+    // Inline code: `code`
+    const inlineCodeRegex = /`([^`]+)`/g;
+    const inlineCodes: Array<{placeholder: string, html: string}> = [];
+    
+    processedContent = processedContent.replace(inlineCodeRegex, (match, code) => {
+      const placeholder = `__INLINE_CODE_${inlineCodes.length}__`;
+      const html = `<span class="chat-inline-code">${escapeHtml(code)}</span>`;
+      inlineCodes.push({ placeholder, html });
+      return placeholder;
+    });
+    
+    // Convert URLs to clickable links
     const urlRegex = /(https?:\/\/[^\s]+)/g;
-    const textWithLinks = message.content.replace(urlRegex, (url) => {
+    const textWithLinks = processedContent.replace(urlRegex, (url) => {
       return `<a href="${url}" target="_blank" rel="noopener noreferrer" class="chat-link">${url}</a>`;
     });
     
     // Replace newlines with <br>
-    const formattedText = textWithLinks.replace(/\n/g, '<br>');
+    let formattedText = textWithLinks.replace(/\n/g, '<br>');
+    
+    // Restore code blocks and inline codes
+    codeBlocks.forEach(({ placeholder, html }) => {
+      formattedText = formattedText.replace(placeholder, html);
+    });
+    
+    inlineCodes.forEach(({ placeholder, html }) => {
+      formattedText = formattedText.replace(placeholder, html);
+    });
+    
     content.innerHTML = formattedText;
   } else if (message.type === 'image') {
     const img = document.createElement('img');
@@ -2072,15 +3303,72 @@ function addMessageToUI(message: ChatMessage, animate: boolean = true) {
 }
 
 /**
+ * Escape HTML to prevent XSS
+ */
+function escapeHtml(text: string): string {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+/**
+ * Get initials from username for avatar
+ */
+function getInitials(username: string): string {
+  if (!username) return '?';
+  const words = username.trim().split(/\s+/);
+  if (words.length === 1) {
+    return words[0].substring(0, 2).toUpperCase();
+  }
+  return (words[0][0] + words[words.length - 1][0]).toUpperCase();
+}
+
+/**
+ * Generate avatar color from username
+ */
+function getAvatarColor(username: string): string {
+  const colors = [
+    'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+    'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)',
+    'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',
+    'linear-gradient(135deg, #43e97b 0%, #38f9d7 100%)',
+    'linear-gradient(135deg, #fa709a 0%, #fee140 100%)',
+    'linear-gradient(135deg, #30cfd0 0%, #330867 100%)',
+    'linear-gradient(135deg, #a8edea 0%, #fed6e3 100%)',
+    'linear-gradient(135deg, #ff9a9e 0%, #fecfef 100%)',
+  ];
+  
+  let hash = 0;
+  for (let i = 0; i < username.length; i++) {
+    hash = username.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  
+  return colors[Math.abs(hash) % colors.length];
+}
+
+/**
  * Send text message
  */
 async function sendTextMessage() {
   const text = chatInput.value.trim();
-  if (!text || !chatManager) return;
+  const imageToSend = attachedImage;
+  
+  if (!text && !imageToSend) return;
+  if (!chatManager) return;
 
   try {
-    await chatManager.sendTextMessage(text);
-    chatInput.value = '';
+    // Send image if attached
+    if (imageToSend) {
+      await chatManager.sendImageMessage(imageToSend);
+      attachedImage = null;
+      updateChatInputVisual();
+    }
+    
+    // Send text if present
+    if (text) {
+      await chatManager.sendTextMessage(text);
+      chatInput.value = '';
+    }
   } catch (err) {
     console.error('Failed to send message:', err);
     alert('Failed to send message');
@@ -2148,8 +3436,9 @@ function cleanupChat() {
   chatMessages.innerHTML = '<div class="chat-empty"><p>Connect to a room to start chatting</p></div>';
   chatInput.disabled = true;
   chatSendBtn.disabled = true;
-  chatImageBtn.disabled = true;
   chatInput.value = '';
+  attachedImage = null;
+  updateChatInputVisual();
 }
 
 // ============================================================================

@@ -16,7 +16,8 @@
     "build": "pnpm build:main && pnpm build:preload && pnpm build:renderer",
     "dev": "pnpm build && pnpm exec electron .",
     "start": "pnpm exec electron .",
-    "package": "pnpm build && pnpm exec electron-builder"
+    "package": "pnpm build && pnpm exec electron-builder",
+    "publish": "dotenv -e .env -- pnpm build && dotenv -e .env -- pnpm exec electron-builder --publish always"
   },
   "dependencies": {
     "@voice-chat/client-core": "workspace:*",
@@ -26,6 +27,7 @@
   "devDependencies": {
     "@types/node": "^20.11.5",
     "concurrently": "^8.2.2",
+    "dotenv-cli": "^7.4.4",
     "electron": "^28.1.4",
     "electron-builder": "^26.7.0",
     "esbuild": "^0.19.11",
@@ -34,6 +36,12 @@
   "build": {
     "appId": "com.voicelink.app",
     "productName": "VoiceLink",
+    "protocols": {
+      "name": "VoiceLink Room",
+      "schemes": [
+        "voicelink"
+      ]
+    },
     "directories": {
       "output": "release"
     },
@@ -63,7 +71,18 @@
             "x64"
           ]
         }
-      ]
+      ],
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": false,
+      "forceCodeSigning": false
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "VoiceLink",
+      "differentialPackage": true
     },
     "mac": {
       "target": [
