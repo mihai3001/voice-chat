@@ -1,6 +1,6 @@
 {
   "name": "@voice-chat/desktop-app",
-  "version": "1.3.5",
+  "version": "1.3.6",
   "description": "Electron desktop application for voice chat",
   "author": "Voice Chat Team",
   "main": "dist/main.js",
@@ -21,8 +21,11 @@
   },
   "dependencies": {
     "@voice-chat/client-core": "workspace:*",
+    "electron-store": "^11.0.2",
     "electron-updater": "^6.1.7",
-    "events": "^3.3.0"
+    "events": "^3.3.0",
+    "winston": "^3.19.0",
+    "winston-daily-rotate-file": "^5.0.0"
   },
   "devDependencies": {
     "@types/node": "^20.11.5",

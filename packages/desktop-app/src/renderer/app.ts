@@ -1,4 +1,5 @@
 import { MeshConnection, AudioManager, ChatManager, ChatMessage } from '@voice-chat/client-core';
+import { toast } from './toast.js';
 
 // Socket.io loaded from CDN
 declare const io: any;
@@ -13,6 +14,7 @@ let connected = false;
 let currentRoomId: string | null = null;
 let isMuted = false;
 let isDeafened = false;
+let wasMutedBeforeDeafen = false; // Track mute state before deafening to restore it
 let inputMonitoringNode: GainNode | null = null;
 
 // Screen sharing state
@@ -1046,6 +1048,49 @@ function updateBandwidthStats() {
 }
 
 /**
+ * Validate input fields
+ */
+function validateInputs(signalingUrl: string, roomId: string, username: string): { valid: boolean; error?: string } {
+  // Validate signaling URL
+  if (!signalingUrl) {
+    return { valid: false, error: 'Please enter signaling server URL' };
+  }
+  
+  try {
+    const url = new URL(signalingUrl);
+    if (!['http:', 'https:', 'ws:', 'wss:'].includes(url.protocol)) {
+      return { valid: false, error: 'Signaling URL must use http, https, ws, or wss protocol' };
+    }
+  } catch (e) {
+    return { valid: false, error: 'Invalid signaling server URL format' };
+  }
+
+  // Validate room ID
+  if (!roomId) {
+    return { valid: false, error: 'Please enter a room ID' };
+  }
+  
+  if (roomId.length < 3) {
+    return { valid: false, error: 'Room ID must be at least 3 characters' };
+  }
+  
+  if (roomId.length > 50) {
+    return { valid: false, error: 'Room ID must be less than 50 characters' };
+  }
+  
+  if (!/^[a-zA-Z0-9_-]+$/.test(roomId)) {
+    return { valid: false, error: 'Room ID can only contain letters, numbers, hyphens, and underscores' };
+  }
+
+  // Validate username
+  if (username && username.length > 50) {
+    return { valid: false, error: 'Username must be less than 50 characters' };
+  }
+
+  return { valid: true };
+}
+
+/**
  * Connect to voice chat
  */
 async function connect() {
@@ -1054,7 +1099,14 @@ async function connect() {
     const roomId = roomIdInput.value.trim();
     const username = usernameInput.value.trim() || 'Anonymous';
     const deviceId = audioInputDeviceSelect.value;
-    
+
+    // Validate inputs
+    const validation = validateInputs(signalingUrl, roomId, username);
+    if (!validation.valid) {
+      toast.error(validation.error!);
+      return;
+    }
+
     // Update user display
     currentUsername.textContent = username;
     
@@ -1064,11 +1116,6 @@ async function connect() {
       avatarIcon.textContent = getInitials(username);
     }
     userAvatar.style.background = getAvatarColor(username);
-
-    if (!signalingUrl || !roomId) {
-      alert('Please enter signaling server URL and room ID');
-      return;
-    }
 
     updateStatus('connecting', 'Initializing audio...');
     connectBtn.disabled = true;
@@ -1101,6 +1148,7 @@ async function connect() {
       socket!.on('connect_error', (err: Error) => {
         console.error('[SOCKET] Connection error:', err);
         console.error('Signaling server connection error:', err);
+        toast.error(`Failed to connect to signaling server: ${err.message}`);
         reject(err);
       });
     });
@@ -1340,10 +1388,32 @@ async function connect() {
   } catch (err) {
     console.error('Connection error:', err);
     
+    // Determine error type and provide helpful message
+    let errorMessage = 'Failed to connect';
+    if (err instanceof Error) {
+      errorMessage = err.message;
+      
+      // Specific error messages for common issues
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        errorMessage = 'Microphone permission denied. Please allow microphone access in your browser settings.';
+        toast.error(errorMessage);
+      } else if (err.name === 'NotFoundError') {
+        errorMessage = 'No microphone found. Please connect a microphone and try again.';
+        toast.error(errorMessage);
+      } else if (err.message.includes('Failed to connect to signaling server')) {
+        toast.error('Could not connect to signaling server. Please check the URL and try again.');
+      } else if (err.message.includes('CORS')) {
+        errorMessage = 'CORS error. The signaling server may not allow connections from this origin.';
+        toast.error(errorMessage);
+      } else {
+        toast.error(`Connection failed: ${err.message}`);
+      }
+    }
+    
     // Only show disconnected status if not auto-reconnecting
     // During auto-reconnect, let the reconnect logic handle status messages
     if (!isReconnecting) {
-      updateStatus('disconnected', `Error: ${(err as Error).message}`);
+      updateStatus('disconnected', `Error: ${errorMessage}`);
       disconnect();
     } else {
       // Just throw the error back to reconnect handler
@@ -1452,6 +1522,7 @@ async function attemptReconnect() {
   
   if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
     console.log('Max reconnection attempts reached, giving up');
+    toast.error(`Failed to reconnect after ${MAX_RECONNECT_ATTEMPTS} attempts. Please try again manually.`);
     updateStatus('disconnected', `Failed to reconnect after ${MAX_RECONNECT_ATTEMPTS} attempts`);
     isReconnecting = false;
     reconnectAttempts = 0;
@@ -1778,9 +1849,10 @@ async function startScreenShare() {
     });
     
     console.log('Screen sharing started');
+    toast.success('Screen sharing started');
   } catch (err) {
     console.error('Error starting screen share:', err);
-    alert(`Could not start screen sharing: ${(err as Error).message}`);
+    toast.error(`Could not start screen sharing: ${(err as Error).message}`);
   }
 }
 
@@ -1830,6 +1902,7 @@ function stopScreenShare() {
   }
   
   console.log('Screen sharing stopped');
+  toast.info('Screen sharing stopped', 2000);
 }
 
 /**
@@ -1936,6 +2009,17 @@ function showScreenAvailable(peerId: string) {
   remoteScreenAvailable.set(peerId, true);
   console.log(`DEBUG: showScreenAvailable called for ${peerId}`);
   console.log(`DEBUG: remoteScreenAvailable Map now has:`, Array.from(remoteScreenAvailable.keys()));
+  
+  // Get peer username
+  let peerUsername = peerId;
+  if (meshConnection) {
+    const peer = meshConnection.getPeer(peerId);
+    if (peer?.username) {
+      peerUsername = peer.username;
+    }
+  }
+  
+  toast.info(`${peerUsername} is sharing their screen`, 3000);
   
   // Update peers list to show the View Screen button as enabled
   updatePeersList();
@@ -2290,10 +2374,21 @@ function toggleDeafen() {
 
   isDeafened = audioManager.toggleDeafen();
   
-  // Deafening should also mute the microphone
-  if (isDeafened && !isMuted) {
-    isMuted = audioManager.toggleMute();
-    updateMuteButton();
+  // When deafening, also mute the microphone so others can't hear you
+  if (isDeafened) {
+    // Save current mute state before deafening
+    wasMutedBeforeDeafen = isMuted;
+    // Mute if not already muted
+    if (!isMuted) {
+      isMuted = audioManager.toggleMute();
+      updateMuteButton();
+    }
+  } else {
+    // When undeafening, restore the previous mute state
+    if (!wasMutedBeforeDeafen && isMuted) {
+      isMuted = audioManager.toggleMute();
+      updateMuteButton();
+    }
   }
   
   updateDeafenButton();
@@ -2396,8 +2491,10 @@ function toggleSpatialAudio() {
   
   if (spatialAudioEnabled) {
     enableSpatialAudio();
+    toast.success('Spatial audio enabled', 2000);
   } else {
     disableSpatialAudio();
+    toast.info('Spatial audio disabled', 2000);
   }
   
   saveSettings(getCurrentSettings());
@@ -2580,7 +2677,7 @@ deafenBtn.addEventListener('click', toggleDeafen);
 copyLinkBtn.addEventListener('click', () => {
   const roomId = roomIdInput.value.trim();
   if (!roomId) {
-    alert('Please enter a room ID first');
+    toast.warning('Please enter a room ID first');
     return;
   }
   
@@ -2598,13 +2695,15 @@ copyLinkBtn.addEventListener('click', () => {
       Copied!
     `;
     
+    toast.success('Room link copied to clipboard!', 2000);
+    
     setTimeout(() => {
       copyLinkBtn.classList.remove('copied');
       copyLinkBtn.innerHTML = originalHTML;
     }, 2000);
   }).catch(err => {
     console.error('Failed to copy:', err);
-    alert('Failed to copy link to clipboard');
+    toast.error('Failed to copy link to clipboard');
   });
 });
 

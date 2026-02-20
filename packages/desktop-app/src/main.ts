@@ -3,6 +3,8 @@ import pkg from 'electron-updater';
 const { autoUpdater } = pkg;
 import * as path from 'path';
 import { fileURLToPath } from 'url';
+import { logger } from './logger.js';
+import { settings } from './settings.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -16,35 +18,36 @@ autoUpdater.autoInstallOnAppQuit = true;
 
 // Enable verbose logging for auto-updater
 (autoUpdater as any).logger = {
-  info: (...args: any[]) => console.log('[AUTO-UPDATE INFO]', ...args),
-  warn: (...args: any[]) => console.warn('[AUTO-UPDATE WARN]', ...args),
-  error: (...args: any[]) => console.error('[AUTO-UPDATE ERROR]', ...args),
-  debug: (...args: any[]) => console.log('[AUTO-UPDATE DEBUG]', ...args)
+  info: (...args: any[]) => logger.info('[AUTO-UPDATE]', ...args),
+  warn: (...args: any[]) => logger.warn('[AUTO-UPDATE]', ...args),
+  error: (...args: any[]) => logger.error('[AUTO-UPDATE]', ...args),
+  debug: (...args: any[]) => logger.debug('[AUTO-UPDATE]', ...args)
 };
 
 // Log the feed URL for debugging
-console.log('Auto-updater configuration:');
-console.log('  App version:', app.getVersion());
-console.log('  Feed URL:', (autoUpdater as any).getFeedURL?.() || 'Not yet set');
-console.log('  Publish config:', {
-  provider: 'github',
-  owner: 'mihai3001',
-  repo: 'voice-chat'
+logger.info('Auto-updater configuration', {
+  appVersion: app.getVersion(),
+  feedURL: (autoUpdater as any).getFeedURL?.() || 'Not yet set',
+  publishConfig: {
+    provider: 'github',
+    owner: 'mihai3001',
+    repo: 'voice-chat'
+  }
 });
 
 // Auto-updater event handlers
 autoUpdater.on('checking-for-update', () => {
-  console.log('Checking for updates...');
+  logger.info('Checking for updates...');
   sendUpdateStatus('checking-for-update');
 });
 
 autoUpdater.on('update-available', (info) => {
-  console.log('Update available:', info);
+  logger.info('Update available', info);
   sendUpdateStatus('update-available', info);
 });
 
 autoUpdater.on('update-not-available', (info) => {
-  console.log('Update not available:', info);
+  logger.info('Update not available', info);
   sendUpdateStatus('update-not-available', info);
 });
 
@@ -64,7 +67,7 @@ autoUpdater.on('download-progress', (progressObj) => {
 });
 
 autoUpdater.on('update-downloaded', (info) => {
-  console.log('Update downloaded:', info);
+  logger.info('Update downloaded', info);
   sendUpdateStatus('update-downloaded', info);
 });
 
@@ -75,9 +78,14 @@ function sendUpdateStatus(event: string, data?: any) {
 }
 
 function createWindow() {
+  // Get saved window bounds
+  const bounds = settings.get('windowBounds');
+  
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    width: bounds.width,
+    height: bounds.height,
+    x: bounds.x,
+    y: bounds.y,
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: true,
@@ -90,6 +98,8 @@ function createWindow() {
     simpleFullscreen: false // Use native fullscreen on macOS
   });
 
+  logger.info('Main window created', { bounds });
+
   // Load the index.html from the renderer folder
   // __dirname is dist/ after compilation
   // When packaged: __dirname = resources/app.asar/dist, HTML is at resources/app.asar/src/renderer/index.html
@@ -101,8 +111,20 @@ function createWindow() {
   // Open DevTools automatically
   mainWindow.webContents.openDevTools();
 
+  // Save window bounds when moved or resized
+  const saveBounds = () => {
+    if (mainWindow && !mainWindow.isMaximized() && !mainWindow.isMinimized()) {
+      const bounds = mainWindow.getBounds();
+      settings.set('windowBounds', bounds);
+    }
+  };
+
+  mainWindow.on('resize', saveBounds);
+  mainWindow.on('move', saveBounds);
+
   mainWindow.on('closed', () => {
     mainWindow = null;
+    logger.info('Main window closed');
   });
   
   // Handle screen capture permissions
@@ -154,13 +176,13 @@ app.on('open-url', (event, url) => {
 });
 
 function handleRoomLink(url: string) {
-  console.log('Received room link:', url);
+  logger.info('Received room link', { url });
   
   // Parse voicelink://room/ROOM_ID or voicelink://ROOM_ID
   const match = url.match(/voicelink:\/\/(?:room\/)?([A-Za-z0-9_-]+)/);
   if (match && match[1]) {
     const roomId = match[1];
-    console.log('Parsed room ID:', roomId);
+    logger.info('Parsed room ID', { roomId });
     
     if (mainWindow && mainWindow.webContents) {
       // Send room ID to renderer
@@ -193,9 +215,9 @@ app.whenReady().then(() => {
   // Check for updates after a short delay (only in production)
   if (app.isPackaged) {
     setTimeout(() => {
-      console.log('Checking for updates...');
+      logger.info('Checking for updates...');
       autoUpdater.checkForUpdates().catch(err => {
-        console.error('Failed to check for updates:', err);
+        logger.error('Failed to check for updates', err);
       });
     }, 3000);
   }
@@ -216,6 +238,41 @@ app.on('window-all-closed', () => {
 });
 
 // IPC handlers
+
+// Settings management
+ipcMain.handle('settings-get', (event, key: string) => {
+  return settings.get(key as any);
+});
+
+ipcMain.handle('settings-set', (event, key: string, value: any) => {
+  settings.set(key as any, value);
+});
+
+ipcMain.handle('settings-get-all', () => {
+  return settings.getAll();
+});
+
+ipcMain.handle('settings-reset', () => {
+  settings.reset();
+});
+
+ipcMain.handle('settings-add-recent-room', (event, roomId: string, name?: string) => {
+  settings.addRecentRoom(roomId, name);
+});
+
+// Logging
+ipcMain.handle('log-info', (event, message: string, data?: any) => {
+  logger.info(message, data);
+});
+
+ipcMain.handle('log-error', (event, message: string, error?: any) => {
+  logger.error(message, error);
+});
+
+ipcMain.handle('log-debug', (event, message: string, data?: any) => {
+  logger.debug(message, data);
+});
+
 ipcMain.handle('get-user-data-path', () => {
   return app.getPath('userData');
 });
